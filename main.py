@@ -37,6 +37,8 @@ from utils import (
     is_search_cooldown,
     get_user_language,
     set_user_language,
+    get_trust_score,
+    get_trust_level,
     r,
 )
 
@@ -666,9 +668,78 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text)
         return
 
+    # Trust level user (untuk menentukan queue)
+    trust_level = get_trust_level(user_id)
+
+    # User dengan trust level tertinggi (normal/high) menggunakan queue biasa,
+    # sedangkan level "hell" hanya dipertemukan dengan sesama low-trust/hell.
     is_premium = r.exists(f"user:{user_id}:premium")
     user_gender = r.get(f"user:{user_id}:gender") or ""
     user_interests = r.smembers(f"user:{user_id}:interests")
+
+    # Jika user sudah di level "hell", gunakan queue khusus spammer
+    if trust_level == "hell":
+        # Coba cari partner di queue hell
+        partner_id = r.lpop("queue:hell")
+
+        if partner_id:
+            partner_id = int(partner_id)
+            session_key = f"session:{user_id}:{partner_id}"
+            r.hset(session_key, mapping={"user_a": user_id, "user_b": partner_id})
+            r.set(f"user:{user_id}", session_key)
+            r.set(f"user:{partner_id}", session_key)
+            r.expire(session_key, 604800)
+
+            increment_chat_count(user_id)
+            increment_chat_count(partner_id)
+
+            partner_interests = r.smembers(f"user:{partner_id}:interests")
+            common = user_interests.intersection(partner_interests)
+
+            if lang == "en":
+                msg_user = "✅ You are connected!"
+            else:
+                msg_user = "✅ Terhubung!"
+
+            partner_lang = get_user_language(partner_id)
+            msg_partner = "✅ You are connected!" if partner_lang == "en" else "✅ Terhubung!"
+
+            if common:
+                common_str = ", ".join(common)
+                if lang == "en":
+                    msg_user += f"\n🎯 Shared interests: {common_str}"
+                else:
+                    msg_user += f"\n🎯 Minat sama: {common_str}"
+
+                if partner_lang == "en":
+                    msg_partner += f"\n🎯 Shared interests: {common_str}"
+                else:
+                    msg_partner += f"\n🎯 Minat sama: {common_str}"
+
+            await update.message.reply_text(msg_user, parse_mode="Markdown")
+            await context.bot.send_message(partner_id, msg_partner, parse_mode="Markdown")
+        else:
+            # Masukkan user ke queue khusus hell
+            r.rpush("queue:hell", user_id)
+            r.expire("queue:hell", 300)
+
+            if lang == "en":
+                text = (
+                    "🔍 Searching for a partner...\n"
+                    "Note: due to repeated reports, you may be matched with users who have a similar trust level.\n"
+                    "Type /stop to cancel."
+                )
+            else:
+                text = (
+                    "🔍 Mencari pasangan...\n"
+                    "Catatan: karena akunmu sering dilaporkan, kamu akan lebih sering dipertemukan dengan pengguna "
+                    "dengan tingkat kepercayaan yang rendah.\n"
+                    "Ketik /stop untuk batal."
+                )
+            await update.message.reply_text(text)
+        return
+
+    # --- Alur normal/premium (trust normal/high/low) ---
 
     target_queue = "queue:free"
 
@@ -702,7 +773,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         target_queue = "queue:free"
 
-    # Try to find match
+    # Try to find match di queue normal/premium
     partner_id = r.lpop(target_queue)
 
     if partner_id:
@@ -900,14 +971,27 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text)
         return
 
-    # Tambahkan laporan
+    # Tambahkan laporan dan turunkan trust user yang dilaporkan
     report_count = add_report(partner_id, user_id)
+    trust_score = get_trust_score(partner_id)
+    trust_level = get_trust_level(partner_id)
 
-    logger.info(f"LAPORAN: User {user_id} melaporkan {partner_id} (total: {report_count})")
+    logger.info(
+        f"LAPORAN: User {user_id} melaporkan {partner_id} "
+        f"(total: {report_count}, trust: {trust_score}, level: {trust_level})"
+    )
 
-    # Auto-ban jika >= AUTO_BAN_REPORTS
-    if report_count >= AUTO_BAN_REPORTS:
-        ban_user(partner_id, "Auto-ban: Multiple reports")
+    # Logika auto-ban bertingkat:
+    # - User yang sudah di level "hell" dan masih sering dilaporkan -> kandidiat ban.
+    # - Atau jika skor trust jatuh di bawah 0 (sangat sering dilaporkan).
+    should_ban = False
+    if trust_score <= 0:
+        should_ban = True
+    elif trust_level == "hell" and report_count >= AUTO_BAN_REPORTS:
+        should_ban = True
+
+    if should_ban:
+        ban_user(partner_id, "Auto-ban: Too many reports / low trust")
 
         # Beri tahu admin
         for admin_id in ADMIN_IDS:
@@ -917,13 +1001,13 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     admin_text = (
                         "🚨 **Auto-ban alert**\n"
                         f"User `{partner_id}` has been automatically banned.\n"
-                        f"Reason: {report_count} reports within 24 hours."
+                        f"Reason: low trust score ({trust_score}) and {report_count} reports in 24 hours."
                     )
                 else:
                     admin_text = (
                         "🚨 **Auto-Ban Alert**\n"
                         f"Pengguna `{partner_id}` telah di-ban otomatis.\n"
-                        f"Alasan: {report_count} laporan dalam 24 jam."
+                        f"Alasan: skor trust rendah ({trust_score}) dan {report_count} laporan dalam 24 jam."
                     )
                 await context.bot.send_message(admin_id, admin_text, parse_mode="Markdown")
             except Exception:
@@ -932,12 +1016,12 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if lang == "en":
             text_user = (
                 "✅ Thank you for your report.\n"
-                "That user has been automatically blocked due to multiple reports."
+                "That user has been automatically blocked due to repeated reports."
             )
         else:
             text_user = (
                 "✅ Terima kasih atas laporanmu.\n"
-                "Pengguna tersebut telah diblokir otomatis karena banyak laporan."
+                "Pengguna tersebut telah diblokir otomatis karena sering dilaporkan."
             )
         await update.message.reply_text(text_user)
     else:

@@ -6,13 +6,26 @@ import string
 from typing import Optional, List
 import redis
 from config import (
-    REDIS_URL, BAD_WORDS, DANGEROUS_EXTENSIONS, 
-    RATE_LIMIT_WINDOW, RATE_LIMIT_MAX_MSGS,
-    AUTO_BAN_REPORTS, REPORT_WINDOW
+    REDIS_URL,
+    BAD_WORDS,
+    DANGEROUS_EXTENSIONS,
+    RATE_LIMIT_WINDOW,
+    RATE_LIMIT_MAX_MSGS,
+    AUTO_BAN_REPORTS,
+    REPORT_WINDOW,
+    MILD_SLANG_WORDS,
+    TRUST_INITIAL,
+    TRUST_HIGH_THRESHOLD,
+    TRUST_NORMAL_THRESHOLD,
+    TRUST_LOW_THRESHOLD,
+    TRUST_PENALTY_PER_REPORT,
 )
 
 # Client Redis untuk koneksi lokal maupun production
 r = redis.from_url(REDIS_URL, decode_responses=True)
+
+TRUST_MIN = 0
+TRUST_MAX = 100
 
 
 def get_user_language(user_id: int) -> str:
@@ -37,11 +50,15 @@ def normalize_text(text: str) -> str:
     return text
 
 def censor_text(text: str) -> str:
-    """Menyensor kata-kata kasar dalam teks."""
+    """Menyensor kata-kata kasar dalam teks.
+
+    Hanya kata dengan level kekasaran berat (BAD_WORDS) yang disensor.
+    Kata-kata gaul kasar-sedang (MILD_SLANG_WORDS) dibiarkan.
+    """
     if not text:
         return text
     words = text.split()
-    censored = []
+    censored: list[str] = []
     for word in words:
         clean = re.sub(r"[^a-zA-Z]", "", normalize_text(word).lower())
         if clean in BAD_WORDS:
@@ -130,6 +147,50 @@ def delete_payment_code(code: str) -> None:
     key = f"payment:{code}"
     r.delete(key)
 
+def get_trust_score(user_id: int) -> int:
+    """Mengembalikan skor trust user dalam rentang 0–100."""
+    raw = r.get(f"user:{user_id}:trust")
+    if raw is None:
+        return TRUST_INITIAL
+    try:
+        score = int(raw)
+    except (TypeError, ValueError):
+        score = TRUST_INITIAL
+    if score < TRUST_MIN:
+        score = TRUST_MIN
+    if score > TRUST_MAX:
+        score = TRUST_MAX
+    return score
+
+
+def set_trust_score(user_id: int, score: int) -> int:
+    """Menyetel skor trust user (otomatis di-clamp ke 0–100)."""
+    if score < TRUST_MIN:
+        score = TRUST_MIN
+    if score > TRUST_MAX:
+        score = TRUST_MAX
+    r.set(f"user:{user_id}:trust", score)
+    return score
+
+
+def update_trust(user_id: int, delta: int) -> int:
+    """Mengubah skor trust user dengan delta tertentu."""
+    current = get_trust_score(user_id)
+    return set_trust_score(user_id, current + delta)
+
+
+def get_trust_level(user_id: int) -> str:
+    """Mengembalikan level trust user: high / normal / low / hell."""
+    score = get_trust_score(user_id)
+    if score >= TRUST_HIGH_THRESHOLD:
+        return "high"
+    if score >= TRUST_NORMAL_THRESHOLD:
+        return "normal"
+    if score >= TRUST_LOW_THRESHOLD:
+        return "low"
+    return "hell"
+
+
 def add_report(user_id: int, reporter_id: int) -> int:
     """Menambahkan laporan untuk user, mengembalikan jumlah laporan 24 jam terakhir."""
     key = f"reports:{user_id}"
@@ -141,6 +202,9 @@ def add_report(user_id: int, reporter_id: int) -> int:
     # Tambahkan laporan baru
     r.zadd(key, {reporter_id: now})
     r.expire(key, REPORT_WINDOW)
+
+    # Kurangi skor trust user yang dilaporkan
+    update_trust(user_id, -TRUST_PENALTY_PER_REPORT)
 
     # Kembalikan total laporan dalam periode
     return r.zcard(key)
