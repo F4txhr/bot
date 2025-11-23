@@ -239,7 +239,7 @@ async def premium_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text)
         return
 
-    text_id = """
+    text_id = f"""
 💎 **Fitur Premium ShadowChat**
 
 Dengan premium, kamu bisa:
@@ -249,19 +249,22 @@ Dengan premium, kamu bisa:
 • 📊 Melihat statistik obrolan yang lebih lengkap
 
 💰 **Harga Premium:**
-• 3 hari → Rp 3.000
-• 7 hari → Rp 7.000
-• 15 hari → Rp 15.000
-• 30 hari → Rp 30.000
-• 1 tahun → Rp 365.000
+• Setiap Rp 1.000 = 1 hari premium
+• Contoh: Rp 3.000 = 3 hari, Rp 7.000 = 7 hari, dan seterusnya.
 
 📥 **Cara aktifkan:**
 
-**Opsi 1: Trakteer (disarankan)**
-Klik tombol di bawah untuk bayar via Trakteer (QRIS / e-wallet)
+**Opsi 1: Trakteer (otomatis)**
+• Klik tombol "Bayar via Trakteer"
+• Di kolom pesan/ucapan dukungan, tulis: `ID: {user_id}`
+  (bot akan membaca ID ini dan mengaktifkan premium secara otomatis)
+
+**Opsi 2: Transfer manual**
+• Gunakan tombol "Transfer manual"
+• Ikuti instruksi dan kirim bukti transfer di chat ini
 """
 
-    text_en = """
+    text_en = f"""
 💎 **ShadowChat Premium Features**
 
 With premium, you can:
@@ -271,16 +274,19 @@ With premium, you can:
 • 📊 See more detailed chat statistics
 
 💰 **Premium prices:**
-• 3 days → Rp 3.000
-• 7 days → Rp 7.000
-• 15 days → Rp 15.000
-• 30 days → Rp 30.000
-• 1 year → Rp 365.000
+• Every Rp 1.000 = 1 day of premium
+• Example: Rp 3.000 = 3 days, Rp 7.000 = 7 days, and so on.
 
 📥 **How to activate:**
 
-**Option 1: Trakteer (recommended)**
-Tap the button below to pay via Trakteer (QRIS / e-wallet)
+**Option 1: Trakteer (automatic)**
+• Tap the "Pay via Trakteer" button
+• In the support message field, write: `ID: {user_id}`
+  (the bot will read this ID and automatically activate your premium)
+
+**Option 2: Manual transfer**
+• Use the "Manual transfer" button
+• Follow the instructions and send your payment proof in this chat
 """
 
     text = text_en if lang == "en" else text_id
