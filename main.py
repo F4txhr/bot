@@ -564,11 +564,28 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ocr_text = ""
 
     # Normalisasi teks OCR untuk pencarian
-    ocr_upper = ocr_text.upper() if isinstance(ocr_text, str) else ""
+    ocr_text_str = ocr_text if isinstance(ocr_text, str) else ""
+    ocr_upper = ocr_text_str.upper()
     code_upper = code.upper()
 
-    # Minimal: kode pembayaran harus muncul di teks OCR (di Catatan/Pesan atau bagian lain)
-    verification_ok = code_upper in ocr_upper
+    # Cek apakah kode pembayaran muncul di teks OCR
+    code_found = code_upper in ocr_upper
+
+    # Ekstrak nominal (yang diawali dengan \"Rp\") dari teks OCR, contoh:
+    # \"Rp150.000\", \"RP 7.000\", dll.
+    amount_candidates = set()
+    try:
+        for match in re.findall(r\"RP\\s*([0-9][0-9\\.\\,]*)\", ocr_upper):
+            cleaned = re.sub(r\"[^0-9]\", \"\", match)
+            if cleaned:
+                amount_candidates.add(int(cleaned))
+    except Exception as exc:
+        logger.warning(f\"Failed to parse amount from OCR for user {user_id}: {exc}\")
+
+    amount_found = amount in amount_candidates
+
+    # Verifikasi hanya lolos jika KODE dan NOMINAL cocok
+    verification_ok = code_found and amount_found
 
     if verification_ok:
         # Verifikasi berhasil -> aktifkan premium
@@ -608,6 +625,7 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "ocr_text": ocr_text or "",
             "photo_file_id": update.message.photo[-1].file_id,
             "timestamp": int(time.time()),
+            "parsed_amounts": ",".join(str(x) for x in sorted(amount_candidates)) if amount_candidates else "",
         },
     )
     r.expire(failed_key, 86400)  # Simpan 24 jam
@@ -1474,7 +1492,11 @@ async def gift_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text_admin = f"✅ Premium diberikan ke {success}/{count} pengguna untuk {days} hari."
         await update.message.reply_text(text_admin)
 
-        logger.info(f"Premium granted to {user_id} for {days} days via manual payment")
+        logger.info(f"Admin {update.effective_user.id} gifted premium to {success} users")
+
+    except ValueError:
+        text = "User count and days must be numbers." if admin_lang == "en" else "Jumlah dan hari harus angka."
+        await update.message.reply_text(text)
 
 
 async def paymanual(update: Update, context: ContextTypes.DEFAULT_TYPE):
