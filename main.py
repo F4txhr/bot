@@ -14,7 +14,8 @@ from telegram.constants import ChatAction
 from config import (
     BOT_TOKEN, REDIS_URL, ADMIN_IDS, 
     PREMIUM_PRICES, E_WALLET_NUMBER, E_WALLET_NAME,
-    TRAKTEER_URL, AVAILABLE_INTERESTS, SEARCH_COOLDOWN
+    TRAKTEER_URL, AVAILABLE_INTERESTS, SEARCH_COOLDOWN,
+    AUTO_BAN_REPORTS
 )
 from utils import (
     censor_text, is_dangerous_file, is_rate_limited,
@@ -295,8 +296,8 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     days_text = f"{days} hari" if days < 365 else "1 tahun"
     
     await update.message.reply_text(
-        f"✅ **Pembayaran Berhasil!**nn"
-        f"Premium aktif untuk {days_text}.n"
+        f"✅ **Pembayaran Berhasil!**\n\n"
+        f"Premium aktif untuk {days_text}.\n"
         f"Gunakan /setgender dan /setinterest untuk setup profile premium-mu!",
         parse_mode="Markdown"
     )
@@ -335,8 +336,8 @@ async def set_interest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         interests_list = ", ".join(AVAILABLE_INTERESTS)
         await update.message.reply_text(
-            f"**Minat yang tersedia:**n{interests_list}nn"
-            f"**Usage:** /setinterest gaming music animen"
+            f"**Minat yang tersedia:**\n{interests_list}\n\n"
+            f"**Usage:** /setinterest gaming music anime\n"
             f"(Bisa pilih 1-3 minat)",
             parse_mode="Markdown"
         )
@@ -465,7 +466,7 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 partner_id, 
-                "💬 Obrolan berakhir.nKetik /search untuk cari baru."
+                "💬 Obrolan berakhir.\nKetik /search untuk cari baru."
             )
         except:
             pass
@@ -498,7 +499,7 @@ async def showid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Profile link terkirim ke partner!")
     else:
         await update.message.reply_text(
-            "❌ Kamu belum set username Telegram.n"
+            "❌ Kamu belum set username Telegram.\n"
             "Set username dulu di Settings Telegram."
         )
 
@@ -521,7 +522,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"LAPORAN: User {user_id} melaporkan {partner_id} (total: {report_count})")
     
     # Auto-ban jika >= 3 reports
-    if report_count >= 3:
+    if report_count >= AUTO_BAN_REPORTS:
         ban_user(partner_id, "Auto-ban: Multiple reports")
         
         # Notify admins
@@ -764,8 +765,8 @@ async def appeal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text and update.message.text.startswith("/"):
         await update.message.reply_text(
-            "ℹ️ Perintah hanya berlaku di luar obrolan.n"
-            "Saat dalam obrolan, kirim pesan biasa.n"
+            "ℹ️ Perintah hanya berlaku di luar obrolan.\n"
+            "Saat dalam obrolan, kirim pesan biasa.\n"
             "Untuk keluar, gunakan /stop atau /next."
         )
         return
