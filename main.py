@@ -401,12 +401,20 @@ async def payment_manual_callback(update: Update, context: ContextTypes.DEFAULT_
 📱 **Manual transfer**
 
 Please choose the premium package/duration you want to purchase:
+
+Note:
+• Automatic verification is currently most stable for **DANA**.
+• GoPay & OVO support is still under development — if it fails, don't worry. You can always use /paymanual and the admin will review your payment manually.
 """
     else:
         text = """
 📱 **Transfer manual**
 
 Silakan pilih paket/durasi premium yang ingin kamu beli:
+
+Catatan:
+• Verifikasi otomatis saat ini paling stabil untuk **DANA**.
+• Dukungan GoPay & OVO masih dalam tahap pengembangan — kalau gagal, tidak usah khawatir. Kamu tetap bisa pakai /paymanual dan admin akan mengecek pembayaranmu secara manual.
 """
 
     keyboard = []
@@ -568,19 +576,28 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ocr_upper = ocr_text_str.upper()
     code_upper = code.upper()
 
+    # Deteksi jenis e-wallet secara sederhana dari teks OCR
+    wallet = "UNKNOWN"
+    if "DANA" in ocr_upper:
+        wallet = "DANA"
+    elif "GOPAY" in ocr_upper or "GO-PAY" in ocr_upper or "GOJEK" in ocr_upper:
+        wallet = "GOPAY"
+    elif "OVO" in ocr_upper:
+        wallet = "OVO"
+
     # Cek apakah kode pembayaran muncul di teks OCR
     code_found = code_upper in ocr_upper
 
-    # Ekstrak nominal (yang diawali dengan \"Rp\") dari teks OCR, contoh:
-    # \"Rp150.000\", \"RP 7.000\", dll.
+    # Ekstrak nominal (yang diawali dengan "Rp") dari teks OCR, contoh:
+    # "Rp150.000", "RP 7.000", dll.
     amount_candidates = set()
     try:
-        for match in re.findall(r\"RP\\s*([0-9][0-9\\.\\,]*)\", ocr_upper):
-            cleaned = re.sub(r\"[^0-9]\", \"\", match)
+        for match in re.findall(r"RP\s*([0-9][0-9\.\,]*)", ocr_upper):
+            cleaned = re.sub(r"[^0-9]", "", match)
             if cleaned:
                 amount_candidates.add(int(cleaned))
     except Exception as exc:
-        logger.warning(f\"Failed to parse amount from OCR for user {user_id}: {exc}\")
+        logger.warning(f"Failed to parse amount from OCR for user {user_id}: {exc}")
 
     amount_found = amount in amount_candidates
 
@@ -626,6 +643,7 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "photo_file_id": update.message.photo[-1].file_id,
             "timestamp": int(time.time()),
             "parsed_amounts": ",".join(str(x) for x in sorted(amount_candidates)) if amount_candidates else "",
+            "wallet": wallet,
         },
     )
     r.expire(failed_key, 86400)  # Simpan 24 jam
@@ -637,12 +655,24 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Notes/Message field of your transfer.\n\n"
             "If you are sure everything is correct, type /paymanual so the admin can check it manually."
         )
+        if wallet in ("GOPAY", "OVO"):
+            fail_text += (
+                "\n\nℹ️ Note: automatic verification for GoPay/OVO is still in development. "
+                "Don't worry if this fails — you can still use these methods, and the admin will review "
+                "your payment manually via /paymanual."
+            )
     else:
         fail_text = (
             "⚠️ Bot belum bisa memverifikasi bukti pembayaran kamu secara otomatis.\n\n"
             "Pastikan **KODE PEMBAYARAN** (misalnya `PAY-XXXX`) ditulis di kolom Catatan/Pesan transaksi.\n\n"
             "Jika kamu yakin sudah benar, ketik /paymanual supaya admin bisa cek secara manual."
         )
+        if wallet in ("GOPAY", "OVO"):
+            fail_text += (
+                "\n\nℹ️ Catatan: verifikasi otomatis untuk GoPay/OVO masih dalam tahap pengembangan. "
+                "Jadi kalau gagal seperti ini tidak apa-apa. Kamu tetap bisa menggunakan metode ini dan "
+                "admin akan mengecek secara manual lewat /paymanual."
+            )
 
     await update.message.reply_text(fail_text, parse_mode="Markdown")
     logger.info(
@@ -1527,6 +1557,8 @@ async def paymanual(update: Update, context: ContextTypes.DEFAULT_TYPE):
     days = int(data.get("days", 0)) if data.get("days") else 0
     ocr_text = data.get("ocr_text", "")
     photo_file_id = data.get("photo_file_id")
+    wallet = data.get("wallet", "UNKNOWN")
+    parsed_amounts = data.get("parsed_amounts", "")
 
     # Kirim ke semua admin untuk dicek manual
     for admin_id in ADMIN_IDS:
@@ -1536,23 +1568,45 @@ async def paymanual(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_lang = "id"
 
         if admin_lang == "en":
-            caption = (
-                "📩 Manual payment verification request\n\n"
-                f"User ID: `{user_id}`\n"
-                f"Payment code: `{code}`\n"
-                f"Amount: Rp {amount:,}\n"
-                f"Days: {days}\n\n"
-                f"OCR text (for reference):\n{ocr_text[:800]}"
+            caption_lines = [
+                "📩 Manual payment verification request",
+                "",
+                f"User ID: `{user_id}`",
+                f"Payment code: `{code}`",
+                f"Wallet: {wallet}",
+                f"Expected amount: Rp {amount:,}",
+                f"Days: {days}",
+            ]
+            if parsed_amounts:
+                caption_lines.append(f"Detected amounts from OCR: {parsed_amounts}")
+            caption_lines.extend(
+                [
+                    "",
+                    "OCR text (for reference):",
+                    ocr_text[:800],
+                ]
             )
+            caption = "\n".join(caption_lines)
         else:
-            caption = (
-                "📩 Permintaan verifikasi manual pembayaran\n\n"
-                f"User ID: `{user_id}`\n"
-                f"Kode pembayaran: `{code}`\n"
-                f"Jumlah: Rp {amount:,}\n"
-                f"Durasi: {days} hari\n\n"
-                f"Teks OCR (referensi):\n{ocr_text[:800]}"
+            caption_lines = [
+                "📩 Permintaan verifikasi manual pembayaran",
+                "",
+                f"User ID: `{user_id}`",
+                f"Kode pembayaran: `{code}`",
+                f"E-wallet: {wallet}",
+                f"Jumlah yang seharusnya: Rp {amount:,}",
+                f"Durasi: {days} hari",
+            ]
+            if parsed_amounts:
+                caption_lines.append(f"Nominal yang terdeteksi dari OCR: {parsed_amounts}")
+            caption_lines.extend(
+                [
+                    "",
+                    "Teks OCR (referensi):",
+                    ocr_text[:800],
+                ]
             )
+            caption = "\n".join(caption_lines)
 
         try:
             if photo_file_id:
