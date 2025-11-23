@@ -3,6 +3,7 @@ import unicodedata
 import time
 import random
 import string
+import math
 from typing import Optional, List
 import redis
 from config import (
@@ -259,7 +260,11 @@ def get_user_stats(user_id: int) -> dict:
 
     if stats["premium"]:
         ttl = r.ttl(f"user:{user_id}:premium")
-        stats["premium_days_left"] = ttl // 86400 if ttl and ttl > 0 else 0
+        if ttl and ttl > 0:
+            # Gunakan pembulatan ke atas agar 86399 detik tetap dianggap 1 hari.
+            stats["premium_days_left"] = math.ceil(ttl / 86400)
+        else:
+            stats["premium_days_left"] = 0
 
     return stats
 
