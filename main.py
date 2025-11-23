@@ -18,12 +18,26 @@ from config import (
     AUTO_BAN_REPORTS
 )
 from utils import (
-    censor_text, is_dangerous_file, is_rate_limited,
-    is_banned, ban_user, unban_user, add_report,
-    create_payment_code, verify_payment_code, delete_payment_code,
-    get_active_users, get_free_users, update_user_activity,
-    get_user_stats, increment_chat_count, get_global_stats,
-    is_search_cooldown, r
+    censor_text,
+    is_dangerous_file,
+    is_rate_limited,
+    is_banned,
+    ban_user,
+    unban_user,
+    add_report,
+    create_payment_code,
+    verify_payment_code,
+    delete_payment_code,
+    get_active_users,
+    get_free_users,
+    update_user_activity,
+    get_user_stats,
+    increment_chat_count,
+    get_global_stats,
+    is_search_cooldown,
+    get_user_language,
+    set_user_language,
+    r,
 )
 
 # Setup logging
@@ -33,7 +47,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Helper: dapatkan pasangan
+# Helper: mendapatkan pasangan obrolan anonim
 def get_partner(user_id: int) -> int | None:
     session_key = r.get(f"user:{user_id}")
     if not session_key:
@@ -47,26 +61,36 @@ def get_partner(user_id: int) -> int | None:
 
 # Helper: kirim typing indicator
 async def send_typing(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    """Kirim typing indicator ke partner"""
+    """Mengirim indikator sedang mengetik ke chat tertentu."""
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-    except:
+    except Exception:
+        # Jika gagal (misalnya user blokir bot), cukup diabaikan
         pass
 
 # Helper: kirim pesan ke pasangan dengan typing indicator
 async def forward_to_partner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
-    # Update user activity
+    lang = get_user_language(user_id)
+
+    # Update aktivitas user
     update_user_activity(user_id)
-    
+
     if is_banned(user_id):
-        await update.message.reply_text("❌ Akunmu diblokir. Gunakan /appeal untuk ajukan banding.")
+        if lang == "en":
+            text = "❌ Your account is blocked. Use /appeal to request a review."
+        else:
+            text = "❌ Akunmu diblokir. Gunakan /appeal untuk mengajukan banding."
+        await update.message.reply_text(text)
         return
-    
+
     # Rate limiting
     if is_rate_limited(user_id):
-        await update.message.reply_text("⚠️ Kamu mengirim pesan terlalu cepat. Tunggu beberapa detik.")
+        if lang == "en":
+            text = "⚠️ You are sending messages too fast. Please wait a few seconds."
+        else:
+            text = "⚠️ Kamu mengirim pesan terlalu cepat. Tunggu beberapa detik."
+        await update.message.reply_text(text)
         return
     
     partner_id = get_partner(user_id)
@@ -96,7 +120,11 @@ async def forward_to_partner(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await context.bot.send_sticker(chat_id=partner_id, sticker=message.sticker.file_id)
         elif message.document:
             if is_dangerous_file(message.document.file_name):
-                await message.reply_text("❌ File berbahaya tidak diizinkan.")
+                if lang == "en":
+                    text = "❌ Dangerous files are not allowed."
+                else:
+                    text = "❌ File berbahaya tidak diizinkan."
+                await message.reply_text(text)
                 return
             caption = censor_text(message.caption) if message.caption else None
             await context.bot.send_document(
@@ -106,7 +134,11 @@ async def forward_to_partner(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
     except Exception as e:
         logger.warning(f"Gagal mengirim ke {partner_id}: {e}")
-        await message.reply_text("⚠️ Pasanganmu tidak aktif. Ketik /search untuk cari yang baru.")
+        if lang == "en":
+            text = "⚠️ Your chat partner is no longer active. Type /search to find a new one."
+        else:
+            text = "⚠️ Pasanganmu tidak aktif. Ketik /search untuk cari yang baru."
+        await message.reply_text(text)
         session_key = r.get(f"user:{user_id}")
         if session_key:
             r.delete(session_key)
@@ -115,13 +147,18 @@ async def forward_to_partner(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # --- COMMANDS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    lang = get_user_language(user_id)
     update_user_activity(user_id)
-    
+
     if is_banned(user_id):
-        await update.message.reply_text("❌ Akunmu diblokir. Gunakan /appeal untuk ajukan banding.")
+        if lang == "en":
+            text = "❌ Your account is blocked. Use /appeal to request a review."
+        else:
+            text = "❌ Akunmu diblokir. Gunakan /appeal untuk mengajukan banding."
+        await update.message.reply_text(text)
         return
-    
-    text = """
+
+    text_id = """
 👋 **Selamat datang di ShadowChat!**
 Obrolan **anonim** dengan orang acak — tanpa nama, tanpa jejak.
 
@@ -147,6 +184,35 @@ Obrolan **anonim** dengan orang acak — tanpa nama, tanpa jejak.
 
 Ketik /search untuk mulai!
 """
+
+    text_en = """
+👋 **Welcome to ShadowChat!**
+Anonymous chat with random people — no name, no trace.
+
+📌 **Main commands:**
+• /search — Find a chat partner
+• /stop — End the current chat
+• /next — Switch to the next partner
+• /premium — Premium features info
+• /stats — See your stats
+
+💎 **Premium features:**
+• /setgender — Set your gender
+• /setinterest — Set your interests/hobbies
+• /search [male/female] — Search by gender
+
+🔧 **Others:**
+• /showid — Share your Telegram profile
+• /report — Report violations
+• /help — Show this help message
+
+🔒 No messages are **stored**.
+⚠️ Do not send illegal or harmful content.
+
+Type /search to start!
+"""
+
+    text = text_en if lang == "en" else text_id
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -154,13 +220,18 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def premium_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    lang = get_user_language(user_id)
     update_user_activity(user_id)
-    
+
     if is_banned(user_id):
-        await update.message.reply_text("❌ Akunmu diblokir. Gunakan /appeal untuk ajukan banding.")
+        if lang == "en":
+            text = "❌ Your account is blocked. Use /appeal to request a review."
+        else:
+            text = "❌ Akunmu diblokir. Gunakan /appeal untuk mengajukan banding."
+        await update.message.reply_text(text)
         return
-    
-    text = """
+
+    text_id = """
 💎 **Fitur Premium ShadowChat**
 
 Dengan premium, kamu bisa:
@@ -181,55 +252,208 @@ Dengan premium, kamu bisa:
 **Opsi 1: Trakteer (disarankan)**
 Klik tombol di bawah untuk bayar via Trakteer (QRIS / e-wallet)
 """
-    
+
+    text_en = """
+💎 **ShadowChat Premium Features**
+
+With premium, you can:
+• 🔍 Search by gender (`/search male` or `/search female`)
+• 🎯 Be matched with people who share the same interests
+• ⚡ Get priority in the search queue
+• 📊 See more detailed chat statistics
+
+💰 **Premium prices:**
+• 3 days → Rp 3.000
+• 7 days → Rp 7.000
+• 15 days → Rp 15.000
+• 30 days → Rp 30.000
+• 1 year → Rp 365.000
+
+📥 **How to activate:**
+
+**Option 1: Trakteer (recommended)**
+Tap the button below to pay via Trakteer (QRIS / e-wallet)
+"""
+
+    text = text_en if lang == "en" else text_id
+
     keyboard = [
-        [InlineKeyboardButton("💳 Bayar via Trakteer", url=TRAKTEER_URL)],
-        [InlineKeyboardButton("📱 Transfer Manual", callback_data="payment_manual")]
+        [InlineKeyboardButton("💳 Bayar via Trakteer" if lang == "id" else "💳 Pay via Trakteer", url=TRAKTEER_URL)],
+        [InlineKeyboardButton("📱 Transfer manual" if lang == "id" else "📱 Manual transfer", callback_data="payment_manual")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
+
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
 
-async def payment_manual_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback untuk payment manual"""
+
+async def set_language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mengatur bahasa tampilan bot (Indonesia / Inggris)."""
+    user_id = update.effective_user.id
+    current_lang = get_user_language(user_id)
+
+    # Jika user memberikan argumen, set langsung
+    if context.args:
+        choice = context.args[0].lower()
+        if choice in ["id", "indo", "indonesia"]:
+            lang = "id"
+        elif choice in ["en", "eng", "english"]:
+            lang = "en"
+        else:
+            if current_lang == "en":
+                text = "Usage: /lang id | en"
+            else:
+                text = "Cara pakai: /lang id | en"
+            await update.message.reply_text(text)
+            return
+
+        set_user_language(user_id, lang)
+        if lang == "en":
+            text = "✅ Language has been set to English."
+        else:
+            text = "✅ Bahasa telah diubah ke Bahasa Indonesia."
+        await update.message.reply_text(text)
+        return
+
+    # Jika tanpa argumen, tampilkan pilihan dengan tombol
+    if current_lang == "en":
+        text = (
+            "Choose the language you want to use:\n"
+            "You can change it anytime using /lang."
+        )
+        btn_id = "Bahasa Indonesia"
+        btn_en = "English (current)" if current_lang == "en" else "English"
+    else:
+        text = (
+            "Pilih bahasa yang ingin kamu gunakan:\n"
+            "Kamu bisa menggantinya kapan saja dengan /lang."
+        )
+        btn_id = "Bahasa Indonesia (saat ini)" if current_lang == "id" else "Bahasa Indonesia"
+        btn_en = "English"
+
+    keyboard = [
+        [
+            InlineKeyboardButton(btn_id, callback_data="lang_id"),
+            InlineKeyboardButton(btn_en, callback_data="lang_en"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(text, reply_markup=reply_markup)
+
+
+async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback untuk pemilihan bahasa via tombol."""
     query = update.callback_query
     await query.answer()
-    
+
     user_id = query.from_user.id
-    
-    text = """
-📱 **Transfer Manual**
+    if query.data == "lang_id":
+        lang = "id"
+    elif query.data == "lang_en":
+        lang = "en"
+    else:
+        return
+
+    set_user_language(user_id, lang)
+
+    if lang == "en":
+        text = (
+            "✅ Language has been set to English.\n"
+            "Type /start to see the updated menu."
+        )
+    else:
+        text = (
+            "✅ Bahasa telah diubah ke Bahasa Indonesia.\n"
+            "Ketik /start untuk melihat menu yang sudah diperbarui."
+        )
+
+    await query.edit_message_text(text)
+
+
+async def payment_manual_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback untuk pembayaran manual."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    lang = get_user_language(user_id)
+
+    if lang == "en":
+        text = """
+📱 **Manual transfer**
+
+Please choose the premium package/duration you want to purchase:
+"""
+    else:
+        text = """
+📱 **Transfer manual**
 
 Silakan pilih paket/durasi premium yang ingin kamu beli:
 """
-    
+
     keyboard = []
     for days, price in PREMIUM_PRICES.items():
-        days_text = f"{days} hari" if days < 365 else "1 tahun"
-        keyboard.append([InlineKeyboardButton(
-            f"{days_text} - Rp {price:,}", 
-            callback_data=f"pay_{days}"
-        )])
-    
+        days_text_id = f"{days} hari" if days &lt; 365 else "1 tahun"
+        days_text_en = f"{days} days" if days &lt; 365 else "1 year"
+        label = days_text_en if lang == "en" else days_text_id
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    f"{label} - Rp {price:,}",
+                    callback_data=f"pay_{days}",
+                )
+            ]
+        )
+
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
 
 async def payment_duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback setelah pilih durasi"""
+    """Callback setelah user memilih durasi premium."""
     query = update.callback_query
     await query.answer()
-    
+
     user_id = query.from_user.id
+    lang = get_user_language(user_id)
+
     days = int(query.data.split("_")[1])
     amount = PREMIUM_PRICES[days]
-    
+
     # Generate payment code
     code = create_payment_code(user_id, days, amount)
-    
-    days_text = f"{days} hari" if days < 365 else "1 tahun"
-    
-    text = f"""
-💳 **Instruksi Pembayaran**
+
+    days_text_id = f"{days} hari" if days &lt; 365 else "1 tahun"
+    days_text_en = f"{days} days" if days &lt; 365 else "1 year"
+
+    if lang == "en":
+        days_text = days_text_en
+        text = f"""
+💳 **Payment instructions**
+
+📦 Package: **{days_text}**
+💰 Price: **Rp {amount:,}**
+
+🔢 **PAYMENT CODE:**
+`{code}`
+
+📤 **How to pay:**
+1. Transfer to one of these:
+   • **GoPay:** {E_WALLET_NUMBER}
+   • **OVO:** {E_WALLET_NUMBER}
+   • **DANA:** {E_WALLET_NUMBER}
+   
+2. **IMPORTANT:** Put this code in the transfer note: `{code}`
+
+3. Take a screenshot of your payment
+
+4. Send the screenshot to this chat
+
+⏰ The code is valid for 1 hour.
+🤖 The bot will auto-verify after you send the screenshot.
+"""
+    else:
+        days_text = days_text_id
+        text = f"""
+💳 **Instruksi pembayaran**
 
 📦 Paket: **{days_text}**
 💰 Harga: **Rp {amount:,}**
@@ -237,7 +461,7 @@ async def payment_duration_callback(update: Update, context: ContextTypes.DEFAUL
 🔢 **KODE PEMBAYARAN:**
 `{code}`
 
-📤 **Cara Bayar:**
+📤 **Cara bayar:**
 1. Transfer ke salah satu:
    • **GoPay:** {E_WALLET_NUMBER}
    • **OVO:** {E_WALLET_NUMBER}
@@ -252,20 +476,21 @@ async def payment_duration_callback(update: Update, context: ContextTypes.DEFAUL
 ⏰ Kode berlaku 1 jam.
 🤖 Bot akan auto-verify setelah kamu kirim screenshot.
 """
-    
+
     await query.edit_message_text(text, parse_mode="Markdown")
 
 async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Auto-verify screenshot pembayaran"""
+    """Auto-verify screenshot pembayaran/manual payment."""
     if not update.message.photo:
         return
-    
+
     user_id = update.effective_user.id
-    
-    # Check apakah user sedang tunggu verifikasi
+    lang = get_user_language(user_id)
+
+    # Cek apakah user sedang menunggu verifikasi pembayaran
     payment_keys = r.keys("payment:PAY-*")
     user_payment = None
-    
+
     for key in payment_keys:
         data = r.hgetall(key)
         if data and int(data.get("user_id", 0)) == user_id:
@@ -274,140 +499,207 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if user_payment:
                 user_payment["code"] = code
                 break
-    
+
     if not user_payment:
         return
-    
-    # Simulate verification (dalam production, pakai OCR/AI untuk verify)
-    await update.message.reply_text("🔍 Memverifikasi pembayaran...")
+
+    # Simulasi proses verifikasi (di production gunakan OCR/AI/dll)
+    if lang == "en":
+        wait_text = "🔍 Verifying your payment..."
+    else:
+        wait_text = "🔍 Memverifikasi pembayaran..."
+
+    await update.message.reply_text(wait_text)
     await asyncio.sleep(2)
-    
-    # Untuk demo, kita assume valid. Dalam production:
-    # 1. Extract text dari image pakai OCR
-    # 2. Cek apakah ada kode pembayaran
-    # 3. Cek nominal match
-    # 4. Cek status "Berhasil"
-    
-    # Grant premium
+
+    # Grant premium (di sini diasumsikan pembayaran valid)
     days = user_payment["days"]
     r.setex(f"user:{user_id}:premium", days * 86400, "1")
     delete_payment_code(user_payment["code"])
-    
-    days_text = f"{days} hari" if days < 365 else "1 tahun"
-    
-    await update.message.reply_text(
-        f"✅ **Pembayaran Berhasil!**\n\n"
-        f"Premium aktif untuk {days_text}.\n"
-        f"Gunakan /setgender dan /setinterest untuk mengatur profil premium-mu!",
-        parse_mode="Markdown"
-    )
-    
+
+    days_text_id = f"{days} hari" if days < 365 else "1 tahun"
+    days_text_en = f"{days} days" if days < 365 else "1 year"
+
+    if lang == "en":
+        days_text = days_text_en
+        success_text = (
+            f"✅ **Payment successful!**\n\n"
+            f"Your premium is now active for {days_text}.\n"
+            f"Use /setgender and /setinterest to set up your premium profile."
+        )
+    else:
+        days_text = days_text_id
+        success_text = (
+            f"✅ **Pembayaran berhasil!**\n\n"
+            f"Premium aktif untuk {days_text}.\n"
+            f"Gunakan /setgender dan /setinterest untuk mengatur profil premium-mu!"
+        )
+
+    await update.message.reply_text(success_text, parse_mode="Markdown")
+
     logger.info(f"Premium granted to {user_id} for {days} days via manual payment")
 
 async def set_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    lang = get_user_language(user_id)
     update_user_activity(user_id)
-    
+
     if is_banned(user_id):
-        await update.message.reply_text("❌ Akunmu diblokir. Gunakan /appeal untuk ajukan banding.")
+        if lang == "en":
+            text = "❌ Your account is blocked. Use /appeal to request a review."
+        else:
+            text = "❌ Akunmu diblokir. Gunakan /appeal untuk mengajukan banding."
+        await update.message.reply_text(text)
         return
-    
+
     if not context.args:
-        await update.message.reply_text("Cara pakai: /setgender male | female | skip")
+        if lang == "en":
+            text = "Usage: /setgender male | female | skip"
+        else:
+            text = "Cara pakai: /setgender male | female | skip"
+        await update.message.reply_text(text)
         return
-    
+
     gender = context.args[0].lower()
     if gender not in ["male", "female", "skip"]:
-        await update.message.reply_text("Pilih salah satu: male, female, atau skip")
+        if lang == "en":
+            text = "Please choose: male, female, or skip."
+        else:
+            text = "Pilih salah satu: male, female, atau skip."
+        await update.message.reply_text(text)
         return
-    
+
     r.set(f"user:{user_id}:gender", gender if gender != "skip" else "")
-    await update.message.reply_text(f"✅ Jenis kelaminmu diatur ke: {gender}")
+
+    if lang == "en":
+        text = f"✅ Your gender has been set to: {gender}"
+    else:
+        text = f"✅ Jenis kelaminmu diatur ke: {gender}"
+
+    await update.message.reply_text(text)
 
 async def set_interest(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set user interests/hobbies"""
+    """Mengatur minat/hobi user untuk kebutuhan pencocokan."""
     user_id = update.effective_user.id
+    lang = get_user_language(user_id)
     update_user_activity(user_id)
-    
+
     if is_banned(user_id):
-        await update.message.reply_text("❌ Akunmu diblokir.")
+        if lang == "en":
+            text = "❌ Your account is blocked."
+        else:
+            text = "❌ Akunmu diblokir."
+        await update.message.reply_text(text)
         return
-    
+
     if not context.args:
         interests_list = ", ".join(AVAILABLE_INTERESTS)
-        await update.message.reply_text(
-            f"**Minat yang tersedia:**\n{interests_list}\n\n"
-            f"**Cara pakai:** /setinterest gaming music sports\n"
-            f"(Kamu bisa memilih 1–3 minat)",
-            parse_mode="Markdown"
-        )
+        if lang == "en":
+            text = (
+                f"**Available interests:**\n{interests_list}\n\n"
+                f"**How to use:** /setinterest gaming music sports\n"
+                f"(You can choose 1–3 interests)"
+            )
+        else:
+            text = (
+                f"**Minat yang tersedia:**\n{interests_list}\n\n"
+                f"**Cara pakai:** /setinterest gaming music sports\n"
+                f"(Kamu bisa memilih 1–3 minat)"
+            )
+        await update.message.reply_text(text, parse_mode="Markdown")
         return
-    
+
     selected = [i.lower() for i in context.args if i.lower() in AVAILABLE_INTERESTS]
-    
+
     if not selected:
-        await update.message.reply_text("❌ Minat tidak valid.")
+        text = "❌ Invalid interest." if lang == "en" else "❌ Minat tidak valid."
+        await update.message.reply_text(text)
         return
-    
+
     if len(selected) > 3:
-        await update.message.reply_text("❌ Maksimal 3 minat.")
+        text = "❌ Maximum 3 interests." if lang == "en" else "❌ Maksimal 3 minat."
+        await update.message.reply_text(text)
         return
-    
-    # Save interests
+
+    # Simpan minat user
     key = f"user:{user_id}:interests"
     r.delete(key)
     for interest in selected:
         r.sadd(key, interest)
-    
-    await update.message.reply_text(f"✅ Minat disetel: {', '.join(selected)}")
+
+    if lang == "en":
+        text = f"✅ Interests set to: {', '.join(selected)}"
+    else:
+        text = f"✅ Minat disetel: {', '.join(selected)}"
+
+    await update.message.reply_text(text)
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    lang = get_user_language(user_id)
     update_user_activity(user_id)
-    
+
     if is_banned(user_id):
-        await update.message.reply_text("❌ Akunmu diblokir.")
+        text = "❌ Your account is blocked." if lang == "en" else "❌ Akunmu diblokir."
+        await update.message.reply_text(text)
         return
-    
+
     if r.get(f"user:{user_id}"):
-        await update.message.reply_text("ℹ️ Kamu sudah dalam obrolan. Ketik /stop untuk keluar.")
+        if lang == "en":
+            text = "ℹ️ You are already in a chat. Type /stop to leave first."
+        else:
+            text = "ℹ️ Kamu sudah dalam obrolan. Ketik /stop untuk keluar."
+        await update.message.reply_text(text)
         return
-    
+
     # Cooldown check
     if is_search_cooldown(user_id, SEARCH_COOLDOWN):
-        await update.message.reply_text(f"⏳ Tunggu {SEARCH_COOLDOWN} detik sebelum mencari lagi.")
+        if lang == "en":
+            text = f"⏳ Please wait {SEARCH_COOLDOWN} seconds before searching again."
+        else:
+            text = f"⏳ Tunggu {SEARCH_COOLDOWN} detik sebelum mencari lagi."
+        await update.message.reply_text(text)
         return
-    
+
     is_premium = r.exists(f"user:{user_id}:premium")
     user_gender = r.get(f"user:{user_id}:gender") or ""
     user_interests = r.smembers(f"user:{user_id}:interests")
-    
+
     target_queue = "queue:free"
-    
+
     if is_premium and context.args:
         req = context.args[0].lower()
         if req in ["male", "female"]:
             if not user_gender:
-                await update.message.reply_text("⚠️ Atur jenis kelaminmu dulu dengan /setgender.")
+                if lang == "en":
+                    text = "⚠️ Set your gender first using /setgender."
+                else:
+                    text = "⚠️ Atur jenis kelaminmu dulu dengan /setgender."
+                await update.message.reply_text(text)
                 return
             target_queue = f"queue:premium:{req}"
         elif req == "any":
             target_queue = "queue:free"
         else:
-            await update.message.reply_text("Cara pakai: /search [male|female|any]")
+            text = "Usage: /search [male|female|any]" if lang == "en" else "Cara pakai: /search [male|female|any]"
+            await update.message.reply_text(text)
             return
     elif is_premium and user_gender:
         opposite = "female" if user_gender == "male" else "male"
         target_queue = f"queue:premium:{opposite}"
     elif not is_premium:
         if context.args:
-            await update.message.reply_text("🔒 Fitur ini hanya untuk pengguna premium. Ketik /premium untuk info.")
+            if lang == "en":
+                text = "🔒 This feature is only for premium users. Type /premium for more info."
+            else:
+                text = "🔒 Fitur ini hanya untuk pengguna premium. Ketik /premium untuk info."
+            await update.message.reply_text(text)
             return
         target_queue = "queue:free"
-    
+
     # Try to find match
     partner_id = r.lpop(target_queue)
-    
+
     if partner_id:
         partner_id = int(partner_id)
         session_key = f"session:{user_id}:{partner_id}"
@@ -415,23 +707,36 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         r.set(f"user:{user_id}", session_key)
         r.set(f"user:{partner_id}", session_key)
         r.expire(session_key, 604800)
-        
+
         # Increment chat count
         increment_chat_count(user_id)
         increment_chat_count(partner_id)
-        
+
         # Check common interests
         partner_interests = r.smembers(f"user:{partner_id}:interests")
         common = user_interests.intersection(partner_interests)
-        
-        msg_user = "✅ Terhubung!"
-        msg_partner = "✅ Terhubung!"
-        
+
+        if lang == "en":
+            msg_user = "✅ You are connected!"
+        else:
+            msg_user = "✅ Terhubung!"
+
+        # Partner language bisa berbeda
+        partner_lang = get_user_language(partner_id)
+        msg_partner = "✅ You are connected!" if partner_lang == "en" else "✅ Terhubung!"
+
         if common:
             common_str = ", ".join(common)
-            msg_user += f"\n🎯 Minat sama: {common_str}"
-            msg_partner += f"\n🎯 Minat sama: {common_str}"
-        
+            if lang == "en":
+                msg_user += f"\n🎯 Shared interests: {common_str}"
+            else:
+                msg_user += f"\n🎯 Minat sama: {common_str}"
+
+            if partner_lang == "en":
+                msg_partner += f"\n🎯 Shared interests: {common_str}"
+            else:
+                msg_partner += f"\n🎯 Minat sama: {common_str}"
+
         await update.message.reply_text(msg_user, parse_mode="Markdown")
         await context.bot.send_message(partner_id, msg_partner, parse_mode="Markdown")
     else:
@@ -441,129 +746,211 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             r.rpush("queue:free", user_id)
             r.expire("queue:free", 300)
-        
-        await update.message.reply_text("🔍 Mencari pasangan...\nKetik /stop untuk batal.")
+
+        if lang == "en":
+            text = "🔍 Searching for a partner...\nType /stop to cancel."
+        else:
+            text = "🔍 Mencari pasangan...\nKetik /stop untuk batal."
+        await update.message.reply_text(text)
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    lang = get_user_language(user_id)
     update_user_activity(user_id)
-    
+
     if is_banned(user_id):
-        await update.message.reply_text("❌ Akunmu diblokir.")
+        text = "❌ Your account is blocked." if lang == "en" else "❌ Akunmu diblokir."
+        await update.message.reply_text(text)
         return
-    
+
     session_key = r.get(f"user:{user_id}")
     if not session_key:
-        await update.message.reply_text("ℹ️ Kamu tidak sedang dalam obrolan.")
+        text = "ℹ️ You are not currently in a chat." if lang == "en" else "ℹ️ Kamu tidak sedang dalam obrolan."
+        await update.message.reply_text(text)
         return
-    
+
     partner_id = get_partner(user_id)
     r.delete(session_key)
     r.delete(f"user:{user_id}")
-    
+
     if partner_id:
         r.delete(f"user:{partner_id}")
         try:
-            await context.bot.send_message(
-                partner_id, 
-                "💬 Obrolan berakhir.\nKetik /search untuk cari baru."
-            )
-        except:
+            partner_lang = get_user_language(partner_id)
+            if partner_lang == "en":
+                text_partner = "💬 The chat has ended.\nType /search to find a new partner."
+            else:
+                text_partner = "💬 Obrolan berakhir.\nKetik /search untuk cari baru."
+            await context.bot.send_message(partner_id, text_partner)
+        except Exception:
             pass
-    
-    await update.message.reply_text("Obrolan dihentikan. Ketik /search untuk mencari pasangan baru.")
+
+    if lang == "en":
+        text_user = "The chat has been ended. Type /search to find a new partner."
+    else:
+        text_user = "Obrolan dihentikan. Ketik /search untuk mencari pasangan baru."
+    await update.message.reply_text(text_user)
 
 async def skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await stop(update, context)
 
 async def showid(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Share profile Telegram link dengan partner"""
+    """Mengirim link profil Telegram ke partner saat ini."""
     user_id = update.effective_user.id
     username = update.effective_user.username
-    
+    lang = get_user_language(user_id)
+
     if is_banned(user_id):
-        await update.message.reply_text("❌ Akunmu diblokir.")
+        text = "❌ Your account is blocked." if lang == "en" else "❌ Akunmu diblokir."
+        await update.message.reply_text(text)
         return
-    
+
     partner_id = get_partner(user_id)
     if not partner_id:
-        await update.message.reply_text("ℹ️ Kamu tidak sedang dalam obrolan.")
+        text = "ℹ️ You are not currently in a chat." if lang == "en" else "ℹ️ Kamu tidak sedang dalam obrolan."
+        await update.message.reply_text(text)
         return
-    
+
     if username:
         profile_link = f"https://t.me/{username}"
-        await context.bot.send_message(
-            partner_id,
-            f"👤 Partner ingin berbagi profil:\n{profile_link}"
-        )
-        await update.message.reply_text("✅ Link profil terkirim ke partner!")
+        partner_lang = get_user_language(partner_id)
+
+        if partner_lang == "en":
+            text_partner = f"👤 Your chat partner wants to share their profile:\n{profile_link}"
+        else:
+            text_partner = f"👤 Partner ingin berbagi profil:\n{profile_link}"
+
+        await context.bot.send_message(partner_id, text_partner)
+
+        if lang == "en":
+            text_user = "✅ Your profile link has been sent to your partner."
+        else:
+            text_user = "✅ Link profil terkirim ke partner!"
+        await update.message.reply_text(text_user)
     else:
-        await update.message.reply_text(
-            "❌ Kamu belum set username Telegram.\n"
-            "Set username dulu di Settings Telegram."
-        )
+        if lang == "en":
+            text = (
+                "❌ You don't have a Telegram username set.\n"
+                "Set your username first in Telegram settings."
+            )
+        else:
+            text = (
+                "❌ Kamu belum set username Telegram.\n"
+                "Set username dulu di pengaturan (Settings) Telegram."
+            )
+        await update.message.reply_text(text)
 
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    lang = get_user_language(user_id)
     update_user_activity(user_id)
-    
+
     if is_banned(user_id):
-        await update.message.reply_text("❌ Akunmu diblokir.")
+        text = "❌ Your account is blocked." if lang == "en" else "❌ Akunmu diblokir."
+        await update.message.reply_text(text)
         return
-    
+
     partner_id = get_partner(user_id)
     if not partner_id:
-        await update.message.reply_text("ℹ️ Kamu tidak sedang dalam obrolan.")
+        text = "ℹ️ You are not currently in a chat." if lang == "en" else "ℹ️ Kamu tidak sedang dalam obrolan."
+        await update.message.reply_text(text)
         return
-    
-    # Add report
+
+    # Tambahkan laporan
     report_count = add_report(partner_id, user_id)
-    
+
     logger.info(f"LAPORAN: User {user_id} melaporkan {partner_id} (total: {report_count})")
-    
-    # Auto-ban jika >= 3 laporan
+
+    # Auto-ban jika >= AUTO_BAN_REPORTS
     if report_count >= AUTO_BAN_REPORTS:
         ban_user(partner_id, "Auto-ban: Multiple reports")
-        
-        # Notify admins
+
+        # Beri tahu admin
         for admin_id in ADMIN_IDS:
             try:
-                await context.bot.send_message(
-                    admin_id,
-                    f"🚨 **Auto-Ban Alert**\n"
-                    f"Pengguna `{partner_id}` telah di-ban otomatis.\n"
-                    f"Alasan: {report_count} laporan dalam 24 jam.",
-                    parse_mode="Markdown"
-                )
-            except:
+                admin_lang = get_user_language(admin_id)
+                if admin_lang == "en":
+                    admin_text = (
+                        "🚨 **Auto-ban alert**\n"
+                        f"User `{partner_id}` has been automatically banned.\n"
+                        f"Reason: {report_count} reports within 24 hours."
+                    )
+                else:
+                    admin_text = (
+                        "🚨 **Auto-Ban Alert**\n"
+                        f"Pengguna `{partner_id}` telah di-ban otomatis.\n"
+                        f"Alasan: {report_count} laporan dalam 24 jam."
+                    )
+                await context.bot.send_message(admin_id, admin_text, parse_mode="Markdown")
+            except Exception:
                 pass
-        
-        await update.message.reply_text(
-            "✅ Terima kasih atas laporanmu.\n"
-            "Pengguna tersebut telah diblokir otomatis karena banyak laporan."
-        )
+
+        if lang == "en":
+            text_user = (
+                "✅ Thank you for your report.\n"
+                "That user has been automatically blocked due to multiple reports."
+            )
+        else:
+            text_user = (
+                "✅ Terima kasih atas laporanmu.\n"
+                "Pengguna tersebut telah diblokir otomatis karena banyak laporan."
+            )
+        await update.message.reply_text(text_user)
     else:
-        await update.message.reply_text("✅ Terima kasih atas laporanmu. Admin akan meninjau.")
+        text = (
+            "✅ Thank you for your report. The admins will review it."
+            if lang == "en"
+            else "✅ Terima kasih atas laporanmu. Admin akan meninjau."
+        )
+        await update.message.reply_text(text)
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show user statistics"""
+    """Menampilkan statistik dasar user."""
     user_id = update.effective_user.id
+    lang = get_user_language(user_id)
     update_user_activity(user_id)
-    
+
     if is_banned(user_id):
-        await update.message.reply_text("❌ Akunmu diblokir.")
+        text = "❌ Your account is blocked." if lang == "en" else "❌ Akunmu diblokir."
+        await update.message.reply_text(text)
         return
-    
+
     stats = get_user_stats(user_id)
-    
-    premium_status = "✅ Premium" if stats["premium"] else "❌ Free"
+
+    # Status premium
     if stats["premium"]:
-        premium_status += f" ({stats['premium_days_left']} hari tersisa)"
-    
-    gender = stats["gender"] if stats["gender"] != "not_set" else "Belum diatur"
-    interests = ", ".join(stats["interests"]) if stats["interests"] else "Belum diatur"
-    
-    text = f"""
+        if lang == "en":
+            premium_status = f"✅ Premium ({stats['premium_days_left']} days remaining)"
+        else:
+            premium_status = f"✅ Premium ({stats['premium_days_left']} hari tersisa)"
+    else:
+        premium_status = "❌ Free" if lang == "en" else "❌ Gratis"
+
+    # Gender
+    if stats["gender"] == "not_set":
+        gender = "Not set" if lang == "en" else "Belum diatur"
+    else:
+        gender = stats["gender"]
+
+    # Interests
+    if stats["interests"]:
+        interests = ", ".join(stats["interests"])
+    else:
+        interests = "Not set" if lang == "en" else "Belum diatur"
+
+    if lang == "en":
+        text = f"""
+📊 **Your stats**
+
+👤 **Status:** {premium_status}
+🔢 **Total chats:** {stats['total_chats']}
+⚥ **Gender:** {gender}
+🎯 **Interests:** {interests}
+
+Type /premium for upgrade info.
+"""
+    else:
+        text = f"""
 📊 **Statistik kamu**
 
 👤 **Status:** {premium_status}
@@ -573,120 +960,189 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 Ketik /premium untuk info upgrade.
 """
-    
+
     await update.message.reply_text(text, parse_mode="Markdown")
 
 # --- ADMIN COMMANDS ---
 async def grant_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return
-    
+
+    admin_lang = get_user_language(update.effective_user.id)
+
     if len(context.args) != 2:
-        await update.message.reply_text("Cara pakai: /grant_premium &lt;user_id&gt; &lt;days&gt;")
+        text = (
+            "Usage: /grant_premium <user_id> <days>"
+            if admin_lang == "en"
+            else "Cara pakai: /grant_premium <user_id> <days>"
+        )
+        await update.message.reply_text(text)
         return
-    
+
     try:
         user_id = int(context.args[0])
         days = int(context.args[1])
         r.setex(f"user:{user_id}:premium", days * 86400, "1")
-        
-        await update.message.reply_text(f"✅ Premium diberikan ke {user_id} untuk {days} hari.")
-        
+
+        if admin_lang == "en":
+            text_admin = f"✅ Premium has been granted to {user_id} for {days} days."
+        else:
+            text_admin = f"✅ Premium diberikan ke {user_id} untuk {days} hari."
+        await update.message.reply_text(text_admin)
+
         try:
-            await context.bot.send_message(
-                user_id, 
-                f"🎉 Premium kamu aktif untuk {days} hari!\n"
-                f"Gunakan /setgender dan /setinterest untuk mengatur profilmu.",
-                parse_mode="Markdown"
-            )
-        except:
+            user_lang = get_user_language(user_id)
+            if user_lang == "en":
+                text_user = (
+                    f"🎉 Your premium is now active for {days} days!\n"
+                    f"Use /setgender and /setinterest to set up your profile."
+                )
+            else:
+                text_user = (
+                    f"🎉 Premium kamu aktif untuk {days} hari!\n"
+                    f"Gunakan /setgender dan /setinterest untuk mengatur profilmu."
+                )
+            await context.bot.send_message(user_id, text_user, parse_mode="Markdown")
+        except Exception:
             pass
     except ValueError:
-        await update.message.reply_text("ID dan hari harus angka.")
+        text = "User ID and days must be numbers." if admin_lang == "en" else "ID dan hari harus angka."
+        await update.message.reply_text(text)
 
 async def gift_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gift premium ke random users"""
+    """Memberikan premium ke sejumlah pengguna acak (admin only)."""
     if update.effective_user.id not in ADMIN_IDS:
         return
-    
+
+    admin_lang = get_user_language(update.effective_user.id)
+
     if len(context.args) != 2:
-        await update.message.reply_text("Cara pakai: /giftpremium &lt;jumlah_user&gt; &lt;days&gt;")
+        text = (
+            "Usage: /giftpremium <user_count> <days>"
+            if admin_lang == "en"
+            else "Cara pakai: /giftpremium <jumlah_user> <days>"
+        )
+        await update.message.reply_text(text)
         return
-    
+
     try:
         count = int(context.args[0])
         days = int(context.args[1])
-        
-        # Get free users yang aktif 24 jam terakhir
+
+        # Ambil pengguna gratis yang aktif 24 jam terakhir
         free_users = get_free_users()
-        
+
         if not free_users:
-            await update.message.reply_text("❌ Tidak ada pengguna gratis yang aktif dalam 24 jam terakhir.")
+            text = (
+                "❌ There are no active free users in the last 24 hours."
+                if admin_lang == "en"
+                else "❌ Tidak ada pengguna gratis yang aktif dalam 24 jam terakhir."
+            )
+            await update.message.reply_text(text)
             return
-        
-        # Random select
+
+        # Pilih acak
         import random
+
         selected = random.sample(free_users, min(count, len(free_users)))
-        
+
         success = 0
         for user_id in selected:
             try:
                 r.setex(f"user:{user_id}:premium", days * 86400, "1")
-                await context.bot.send_message(
-                    user_id,
-                    f"🎁 **SELAMAT!**\n\n"
-                    f"Kamu mendapat premium **GRATIS** untuk {days} hari!\n"
-                    f"Gunakan /setgender dan /setinterest untuk setup.",
-                    parse_mode="Markdown"
-                )
+                user_lang = get_user_language(user_id)
+                if user_lang == "en":
+                    text_user = (
+                        f"🎁 **CONGRATULATIONS!**\n\n"
+                        f"You have received **FREE premium** for {days} days!\n"
+                        f"Use /setgender and /setinterest to set up your profile."
+                    )
+                else:
+                    text_user = (
+                        f"🎁 **SELAMAT!**\n\n"
+                        f"Kamu mendapat premium **GRATIS** untuk {days} hari!\n"
+                        f"Gunakan /setgender dan /setinterest untuk setup."
+                    )
+                await context.bot.send_message(user_id, text_user, parse_mode="Markdown")
                 success += 1
-            except:
+            except Exception:
                 pass
-        
-        await update.message.reply_text(
-            f"✅ Premium diberikan ke {success}/{count} pengguna untuk {days} hari."
-        )
-        
+
+        if admin_lang == "en":
+            text_admin = f"✅ Premium was given to {success}/{count} users for {days} days."
+        else:
+            text_admin = f"✅ Premium diberikan ke {success}/{count} pengguna untuk {days} hari."
+        await update.message.reply_text(text_admin)
+
         logger.info(f"Admin {update.effective_user.id} gifted premium to {success} users")
-        
+
     except ValueError:
-        await update.message.reply_text("Jumlah dan hari harus angka.")
+        text = "User count and days must be numbers." if admin_lang == "en" else "Jumlah dan hari harus angka."
+        await update.message.reply_text(text)
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Broadcast message ke semua active users"""
+    """Mengirim pesan broadcast ke semua pengguna aktif (admin only)."""
     if update.effective_user.id not in ADMIN_IDS:
         return
-    
+
+    admin_lang = get_user_language(update.effective_user.id)
+
     if not context.args:
-        await update.message.reply_text("Cara pakai: /broadcast &lt;pesan&gt;")
+        text = (
+            "Usage: /broadcast <message>"
+            if admin_lang == "en"
+            else "Cara pakai: /broadcast <pesan>"
+        )
+        await update.message.reply_text(text)
         return
-    
+
     message = " ".join(context.args)
     active_users = get_active_users(24)
-    
+
     success = 0
     for user_id in active_users:
         try:
+            user_lang = get_user_language(user_id)
+            if user_lang == "en":
+                header = "📢 **Announcement**"
+            else:
+                header = "📢 **Pengumuman**"
             await context.bot.send_message(
                 user_id,
-                f"📢 **Pengumuman**\n\n{message}",
-                parse_mode="Markdown"
+                f"{header}\n\n{message}",
+                parse_mode="Markdown",
             )
             success += 1
             await asyncio.sleep(0.05)  # Prevent flood
-        except:
+        except Exception:
             pass
-    
-    await update.message.reply_text(f"✅ Broadcast terkirim ke {success} pengguna.")
+
+    if admin_lang == "en":
+        text_admin = f"✅ Broadcast sent to {success} users."
+    else:
+        text_admin = f"✅ Broadcast terkirim ke {success} pengguna."
+    await update.message.reply_text(text_admin)
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show global statistics (admin only)"""
+    """Menampilkan statistik global (khusus admin)."""
     if update.effective_user.id not in ADMIN_IDS:
         return
-    
+
+    admin_lang = get_user_language(update.effective_user.id)
     stats = get_global_stats()
-    
-    text = f"""
+
+    if admin_lang == "en":
+        text = f"""
+📊 **Global statistics**
+
+👥 **Total users:** {stats['total_users']}
+💬 **Active sessions:** {stats['active_sessions']}
+⏳ **Waiting in queue:** {stats['queue_waiting']}
+💎 **Premium users:** {stats['total_premium']}
+🚫 **Blocked users:** {stats['total_banned']}
+"""
+    else:
+        text = f"""
 📊 **Statistik global**
 
 👥 **Total pengguna:** {stats['total_users']}
@@ -695,54 +1151,76 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 💎 **Pengguna premium:** {stats['total_premium']}
 🚫 **Pengguna yang diblokir:** {stats['total_banned']}
 """
-    
+
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def list_banned(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return
-    
+
+    admin_lang = get_user_language(update.effective_user.id)
+
     cursor = 0
-    banned_ids = []
+    banned_ids: list[str] = []
     while True:
         cursor, keys = r.scan(cursor=cursor, match="user:*:banned", count=100)
         for key in keys:
-            user_id = key.split(':')[1]
+            user_id = key.split(":")[1]
             banned_ids.append(user_id)
         if cursor == 0:
             break
-    
+
     if not banned_ids:
-        await update.message.reply_text("Tidak ada pengguna yang diblokir.")
+        text = "There are no blocked users." if admin_lang == "en" else "Tidak ada pengguna yang diblokir."
+        await update.message.reply_text(text)
     else:
-        text = "📋 Daftar pengguna yang diblokir:\n" + "\n".join(banned_ids[:50])
-        if len(banned_ids) > 50:
-            text += f"\n\n... dan {len(banned_ids) - 50} lainnya"
+        if admin_lang == "en":
+            text = "📋 List of blocked users:\n" + "\n".join(banned_ids[:50])
+            if len(banned_ids) > 50:
+                text += f"\n\n... and {len(banned_ids) - 50} more"
+        else:
+            text = "📋 Daftar pengguna yang diblokir:\n" + "\n".join(banned_ids[:50])
+            if len(banned_ids) > 50:
+                text += f"\n\n... dan {len(banned_ids) - 50} lainnya"
         await update.message.reply_text(text)
 
 async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return
-    
+
+    admin_lang = get_user_language(update.effective_user.id)
+
     if not context.args:
-        await update.message.reply_text("Cara pakai: /unban &lt;user_id&gt;")
+        text = (
+            "Usage: /unban <user_id>"
+            if admin_lang == "en"
+            else "Cara pakai: /unban <user_id>"
+        )
+        await update.message.reply_text(text)
         return
-    
+
     try:
         user_id = int(context.args[0])
         unban_user(user_id)
-        
-        await update.message.reply_text(f"✅ Pengguna {user_id} telah di-unban.")
-        
+
+        if admin_lang == "en":
+            text_admin = f"✅ User {user_id} has been unbanned."
+        else:
+            text_admin = f"✅ Pengguna {user_id} telah di-unban."
+        await update.message.reply_text(text_admin)
+
         try:
-            await context.bot.send_message(
-                user_id, 
-                "🎉 Blokir akunmu telah dicabut. Selamat datang kembali!"
-            )
-        except:
+            user_lang = get_user_language(user_id)
+            if user_lang == "en":
+                text_user = "🎉 Your account block has been lifted. Welcome back!"
+            else:
+                text_user = "🎉 Blokir akunmu telah dicabut. Selamat datang kembali!"
+            await context.bot.send_message(user_id, text_user)
+        except Exception:
             pass
     except ValueError:
-        await update.message.reply_text("ID harus berupa angka.")
+        text = "User ID must be a number." if admin_lang == "en" else "ID harus berupa angka."
+        await update.message.reply_text(text)
 
 async def appeal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -763,18 +1241,29 @@ async def appeal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- MESSAGE HANDLER ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang = get_user_language(user_id)
+
     if update.message.text and update.message.text.startswith("/"):
-        await update.message.reply_text(
-            "ℹ️ Perintah hanya berlaku di luar obrolan.\n"
-            "Saat dalam obrolan, kirim pesan biasa.\n"
-            "Untuk keluar, gunakan /stop atau /next."
-        )
+        if lang == "en":
+            text = (
+                "ℹ️ Commands only work outside of an active chat.\n"
+                "While in a chat, just send normal messages.\n"
+                "To leave, use /stop or /next."
+            )
+        else:
+            text = (
+                "ℹ️ Perintah hanya berlaku di luar obrolan.\n"
+                "Saat dalam obrolan, kirim pesan biasa.\n"
+                "Untuk keluar, gunakan /stop atau /next."
+            )
+        await update.message.reply_text(text)
         return
-    
+
     # Check if this is a payment screenshot
     if update.message.photo:
         await verify_screenshot(update, context)
-    
+
     await forward_to_partner(update, context)
 
 # --- MAIN ---
@@ -790,6 +1279,7 @@ def main():
     application.add_handler(CommandHandler("premium", premium_info))
     application.add_handler(CommandHandler("setgender", set_gender))
     application.add_handler(CommandHandler("setinterest", set_interest))
+    application.add_handler(CommandHandler("lang", set_language_command))
     application.add_handler(CommandHandler("search", search))
     application.add_handler(CommandHandler("stop", stop))
     application.add_handler(CommandHandler("skip", skip))
@@ -810,6 +1300,7 @@ def main():
     # Callback handlers
     application.add_handler(CallbackQueryHandler(payment_manual_callback, pattern="^payment_manual$"))
     application.add_handler(CallbackQueryHandler(payment_duration_callback, pattern="^pay_"))
+    application.add_handler(CallbackQueryHandler(language_callback, pattern="^lang_"))
     
     # Message handler
     application.add_handler(MessageHandler(
