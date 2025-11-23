@@ -123,7 +123,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = """
 👋 **Selamat datang di ShadowChat!**
-Obrol **anonim** dengan orang acak — tanpa nama, tanpa jejak.
+Obrolan **anonim** dengan orang acak — tanpa nama, tanpa jejak.
 
 📌 **Perintah Utama:**
 • /search — Cari pasangan obrolan
@@ -138,7 +138,7 @@ Obrol **anonim** dengan orang acak — tanpa nama, tanpa jejak.
 • /search [male/female] — Cari berdasarkan gender
 
 🔧 **Lainnya:**
-• /showid — Bagikan profile Telegram-mu
+• /showid — Bagikan profil Telegram-mu
 • /report — Laporkan pelanggaran
 • /help — Tampilkan pesan ini
 
@@ -337,7 +337,7 @@ async def set_interest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         interests_list = ", ".join(AVAILABLE_INTERESTS)
         await update.message.reply_text(
             f"**Minat yang tersedia:**\n{interests_list}\n\n"
-            f"**Usage:** /setinterest gaming music anime\n"
+            f"**Cara pakai:** /setinterest gaming music sports\n"
             f"(Bisa pilih 1-3 minat)",
             parse_mode="Markdown"
         )
@@ -429,8 +429,8 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if common:
             common_str = ", ".join(common)
-            msg_user += f"n🎯 Minat sama: {common_str}"
-            msg_partner += f"n🎯 Minat sama: {common_str}"
+            msg_user += f"\n🎯 Minat sama: {common_str}"
+            msg_partner += f"\n🎯 Minat sama: {common_str}"
         
         await update.message.reply_text(msg_user, parse_mode="Markdown")
         await context.bot.send_message(partner_id, msg_partner, parse_mode="Markdown")
@@ -442,7 +442,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             r.rpush("queue:free", user_id)
             r.expire("queue:free", 300)
         
-        await update.message.reply_text("🔍 Mencari pasangan...nKetik /stop untuk batal.")
+        await update.message.reply_text("🔍 Mencari pasangan...\nKetik /stop untuk batal.")
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -494,7 +494,7 @@ async def showid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         profile_link = f"https://t.me/{username}"
         await context.bot.send_message(
             partner_id,
-            f"👤 Partner ingin berbagi profil:n{profile_link}"
+            f"👤 Partner ingin berbagi profil:\n{profile_link}"
         )
         await update.message.reply_text("✅ Profile link terkirim ke partner!")
     else:
@@ -521,8 +521,8 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"LAPORAN: User {user_id} melaporkan {partner_id} (total: {report_count})")
     
-    # Auto-ban jika >= 3 reports
-    if report_count >= AUTO_BAN_REPORTS:
+    # Auto-ban jika &gt;= 3 reports
+    if report_count &gt;= AUTO_BAN_REPORTS:
         ban_user(partner_id, "Auto-ban: Multiple reports")
         
         # Notify admins
@@ -530,16 +530,16 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await context.bot.send_message(
                     admin_id,
-                    f"🚨 **Auto-Ban Alert**n"
-                    f"User `{partner_id}` telah di-ban otomatis.n"
-                    f"Alasan: {report_count} reports dalam 24 jam.",
+                    f"🚨 **Auto-Ban Alert**\n"
+                    f"User `{partner_id}` telah di-ban otomatis.\n"
+                    f"Alasan: {report_count} laporan dalam 24 jam.",
                     parse_mode="Markdown"
                 )
             except:
                 pass
         
         await update.message.reply_text(
-            "✅ Terima kasih atas laporanmu.n"
+            "✅ Terima kasih atas laporanmu.\n"
             "User telah diblokir otomatis karena banyak laporan."
         )
     else:
@@ -595,7 +595,7 @@ async def grant_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 user_id, 
-                f"🎉 Premium kamu aktif untuk {days} hari!n"
+                f"🎉 Premium kamu aktif untuk {days} hari!\n"
                 f"Gunakan /setgender dan /setinterest untuk setup.",
                 parse_mode="Markdown"
             )
@@ -634,8 +634,8 @@ async def gift_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 r.setex(f"user:{user_id}:premium", days * 86400, "1")
                 await context.bot.send_message(
                     user_id,
-                    f"🎁 **SELAMAT!**nn"
-                    f"Kamu mendapat premium **GRATIS** untuk {days} hari!n"
+                    f"🎁 **SELAMAT!**\n\n"
+                    f"Kamu mendapat premium **GRATIS** untuk {days} hari!\n"
                     f"Gunakan /setgender dan /setinterest untuk setup.",
                     parse_mode="Markdown"
                 )
@@ -669,7 +669,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 user_id,
-                f"📢 **Announcement**nn{message}",
+                f"📢 **Pengumuman**\n\n{message}",
                 parse_mode="Markdown"
             )
             success += 1
@@ -715,9 +715,9 @@ async def list_banned(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not banned_ids:
         await update.message.reply_text("Tidak ada user yang dibanned.")
     else:
-        text = "📋 Daftar user banned:n" + "n".join(banned_ids[:50])
-        if len(banned_ids) > 50:
-            text += f"nn... dan {len(banned_ids) - 50} lainnya"
+        text = "📋 Daftar pengguna yang diblokir:\n" + "\n".join(banned_ids[:50])
+        if len(banned_ids) &gt; 50:
+            text += f"\n\n... dan {len(banned_ids) - 50} lainnya"
         await update.message.reply_text(text)
 
 async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -751,7 +751,7 @@ async def appeal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ℹ️ Kamu tidak sedang diblokir.")
         return
     
-    msg = f"📨 **Permohonan Banding**nUser `{user_id}` meminta pencabutan blokir."
+    msg = f"📨 **Permohonan Banding**\nUser `{user_id}` meminta pencabutan blokir."
     
     for admin_id in ADMIN_IDS:
         try:
