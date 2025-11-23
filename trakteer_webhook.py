@@ -52,14 +52,33 @@ def extract_message(data: Dict[str, Any]) -> str:
 
 
 def extract_user_id_from_message(message: str) -> int | None:
-    """Mencari pattern ID: <user_id> di pesan Trakteer."""
+    """Mencari user_id dari pesan Trakteer.
+
+    Prioritas:
+    1. Pola "ID: <user_id>"
+    2. Pola kode unik seperti "SC<user_id>-XXXX"
+    """
+    if not message:
+        return None
+
+    # Pola lama: "ID: 123456789"
     match = re.search(r"[Ii][Dd]\s*[:\-]?\s*(\d{5,15})", message)
-    if not match:
-        return None
-    try:
-        return int(match.group(1))
-    except ValueError:
-        return None
+    if match:
+        try:
+            return int(match.group(1))
+        except ValueError:
+            pass
+
+    # Pola baru: kode unik "SC<user_id>-ABCD"
+    upper = message.upper()
+    match = re.search(r"SC(\d{5,15})-[A-Z0-9]{1,8}", upper)
+    if match:
+        try:
+            return int(match.group(1))
+        except ValueError:
+            pass
+
+    return None
 
 
 @app.route("/trakteer/webhook", methods=["POST"])

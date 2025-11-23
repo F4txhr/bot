@@ -45,6 +45,7 @@ from utils import (
     get_trust_score,
     get_trust_level,
     add_rating,
+    generate_payment_code,
     r,
 )
 
@@ -244,6 +245,9 @@ async def premium_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text)
         return
 
+    # Kode unik untuk pembayaran via Trakteer (berisi user_id agar mudah dikenali)
+    unique_code = f"SC{user_id}-{generate_payment_code()[:4]}"
+
     text_id = f"""
 💎 **Fitur Premium ShadowChat**
 
@@ -261,8 +265,10 @@ Dengan premium, kamu bisa:
 
 **Opsi 1: Trakteer (otomatis)**
 • Klik tombol "Bayar via Trakteer"
-• Di kolom pesan/ucapan dukungan, tulis: `ID: {user_id}`
-  (bot akan membaca ID ini dan mengaktifkan premium secara otomatis)
+• Di kolom pesan/ucapan dukungan, tulis salah satu:
+  • `ID: {user_id}`
+  • atau kode unik: `{unique_code}`
+  (bot akan membaca ID/kode ini dan mengaktifkan premium secara otomatis)
 
 **Opsi 2: Transfer manual**
 • Gunakan tombol "Transfer manual"
@@ -286,8 +292,10 @@ With premium, you can:
 
 **Option 1: Trakteer (automatic)**
 • Tap the "Pay via Trakteer" button
-• In the support message field, write: `ID: {user_id}`
-  (the bot will read this ID and automatically activate your premium)
+• In the support message field, write either:
+  • `ID: {user_id}`
+  • or the unique code: `{unique_code}`
+  (the bot will read this ID/code and automatically activate your premium)
 
 **Option 2: Manual transfer**
 • Use the "Manual transfer" button
