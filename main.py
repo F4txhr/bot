@@ -4,6 +4,7 @@ import redis
 import io
 import time
 import re
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from PIL import Image
 import pytesseract
@@ -596,22 +597,123 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Cek apakah kode pembayaran muncul di teks OCR
     code_found = code_upper in ocr_upper
 
-    # Ekstrak nominal (yang diawali dengan "Rp") dari teks OCR, contoh:
-    # "Rp150.000", "RP 7.000", dll.
-    amount_candidates = set()
+    # Ekstrak nominal (yang diawali dengan "Rp") dari teks OCR per-baris, contoh:
+    # "Rp150.000", "RP 7.000", dll. Kita simpan juga konteks barisnya agar bisa
+    # membedakan:
+    # - DANA   : gunakan nominal dengan label "TOTAL"/"TOTAL BAYAR"
+    # - GOPAY  : gunakan nominal dengan label "JUMLAH"
+    # - OVO    : gunakan nominal dengan label "NOMINAL TRANSFER"
+    amount_matches: list[tuple[int, str]] = []
     try:
-        # Gunakan pola "RP\s*" (BUKAN "RP\\s*") agar \s dikenali sebagai whitespace.
-        for match in re.findall(r"RP\s*([0-9][0-9\.\,]*)", ocr_upper):
-            cleaned = re.sub(r"[^0-9]", "", match)
-            if cleaned:
-                amount_candidates.add(int(cleaned))
+        lines = ocr_text_str.splitlines()
+        for line in lines:
+            line_upper = line.upper()
+            for m in re.finditer(r"RP\s*([0-9][0-9\.\,]*)", line_upper):
+                raw = m.group(1)
+                cleaned = re.sub(r"[^0-9]", "", raw)
+                if cleaned:
+                    amt = int(cleaned)
+                    amount_matches.append((amt, line_upper))
     except Exception as exc:
         logger.warning(f"Failed to parse amount from OCR for user {user_id}: {exc}")
 
+    # Pilih kandidat nominal sesuai jenis e-wallet
+    filtered_amounts: list[int] = []
+    if wallet == "DANA":
+        # Cari nominal yang barisnya mengandung "TOTAL" (Total Bayar)
+        filtered_amounts = [amt for amt, line in amount_matches if "TOTAL" in line]
+    elif wallet == "GOPAY":
+        # Cari nominal yang barisnya mengandung "JUMLAH"
+        filtered_amounts = [amt for amt, line in amount_matches if "JUMLAH" in line]
+    elif wallet == "OVO":
+        # Cari nominal yang barisnya mengandung "NOMINAL" dan "TRANSFER"
+        filtered_amounts = [
+            amt for amt, line in amount_matches if "NOMINAL" in line and "TRANSFER" in line
+        ]
+
+    if filtered_amounts:
+        amount_candidates = set(filtered_amounts)
+    else:
+        # Jika tidak ditemukan label spesifik, gunakan semua nominal yang terdeteksi
+        amount_candidates = {amt for amt, _ in amount_matches}
+
     amount_found = amount in amount_candidates
 
-    # Verifikasi hanya lolos jika KODE dan NOMINAL cocok
+    # --- Verifikasi tanggal & waktu transaksi (opsional) ---
+    # Kita coba baca tanggal dalam format: "10 Nov 2025", "09 Okt 2025", dll.
+    # dan waktu "19:04", "12:50", dsb. Jika sukses, pastikan tidak terlalu jauh
+    # dari waktu sekarang (± 72 jam). Jika parsing gagal, pengecekan tanggal
+    # tidak menggagalkan verifikasi (hanya sebagai proteksi ekstra).
+    transaction_ts = None
+    try:
+        month_map = {
+            "JAN": 1,
+            "JANUARI": 1,
+            "FEB": 2,
+            "FEBRUARI": 2,
+            "MAR": 3,
+            "MARET": 3,
+            "APR": 4,
+            "APRIL": 4,
+            "MEI": 5,
+            "JUN": 6,
+            "JUNI": 6,
+            "JUL": 7,
+            "JULI": 7,
+            "AGU": 8,
+            "AGUSTUS": 8,
+            "SEP": 9,
+            "SEPT": 9,
+            "SEPTEMBER": 9,
+            "OKT": 10,
+            "OKTOBER": 10,
+            "NOV": 11,
+            "NOVEMBER": 11,
+            "DES": 12,
+            "DESEMBER": 12,
+        }
+        date_regex = (
+            r"(\d{1,2})\s+("
+            r"JAN|JANUARI|FEB|FEBRUARI|MAR|MARET|APR|APRIL|MEI|"
+            r"JUN|JUNI|JUL|JULI|AGU|AGUSTUS|SEP|SEPT|SEPTEMBER|"
+            r"OKT|OKTOBER|NOV|NOVEMBER|DES|DESEMBER"
+            r")\s+(\d{4})"
+        )
+        date_match = re.search(date_regex, ocr_upper)
+        time_match = re.search(r"(\d{1,2}):(\d{2})", ocr_upper)
+
+        if date_match:
+            day_str, mon_str, year_str = date_match.groups()
+            day = int(day_str)
+            year = int(year_str)
+            month = month_map.get(mon_str, None)
+
+            hour = 12
+            minute = 0
+            if time_match:
+                hour = int(time_match.group(1))
+                minute = int(time_match.group(2))
+
+            if month is not None:
+                dt = datetime(year, month, day, hour, minute)
+                transaction_ts = dt.timestamp()
+    except Exception as exc:
+        logger.warning(f"Failed to parse date/time from OCR for user {user_id}: {exc}")
+        transaction_ts = None
+
+    date_time_valid = None
+    if transaction_ts is not None:
+        now_ts = time.time()
+        diff_hours = abs(now_ts - transaction_ts) / 3600.0
+        # Anggap valid jika selisih <= 72 jam dari sekarang.
+        date_time_valid = diff_hours <= 72
+
+    # Verifikasi hanya lolos jika KODE dan NOMINAL cocok.
+    # Jika tanggal/waktu berhasil diparse dan jelas terlalu jauh dari sekarang,
+    # maka verifikasi otomatis dianggap gagal.
     verification_ok = code_found and amount_found
+    if date_time_valid is False:
+        verification_ok = False
 
     if verification_ok:
         # Verifikasi berhasil -> aktifkan premium

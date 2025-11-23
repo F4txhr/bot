@@ -1,6 +1,8 @@
 import argparse
 import io
 import re
+import time
+from datetime import datetime
 
 from PIL import Image
 import pytesseract
@@ -17,20 +19,19 @@ def detect_wallet(ocr_upper: str) -> str:
     return "UNKNOWN"
 
 
-def extract_amount_candidates(ocr_upper: str) -> list[int]:
-    """Mengambil semua nominal yang diawali 'RP' dari teks OCR.
-
-    Catatan: gunakan pola "RP\s*" (BUKAN "RP\\s*") supaya \s dikenali
-    sebagai whitespace oleh regex, bukan karakter backslash + 's'.
-    """
+def extract_amount_candidates(ocr_text: str) -> list[int]:
+    """Mengambil semua nominal yang diawali 'RP' dari teks OCR (per baris)."""
     candidates: set[int] = set()
-    for match in re.findall(r"RP\s*([0-9][0-9\.\,]*)", ocr_upper):
-        cleaned = re.sub(r"[^0-9]", "", match)
-        if cleaned:
-            try:
-                candidates.add(int(cleaned))
-            except ValueError:
-                continue
+    lines = ocr_text.splitlines()
+    for line in lines:
+        line_upper = line.upper()
+        for match in re.findall(r"RP\s*([0-9][0-9\.\,]*)", line_upper):
+            cleaned = re.sub(r"[^0-9]", "", match)
+            if cleaned:
+                try:
+                    candidates.add(int(cleaned))
+                except ValueError:
+                    continue
     return sorted(candidates)
 
 
@@ -38,6 +39,66 @@ def find_payment_codes(ocr_upper: str) -> list[str]:
     """Mencari pola kode pembayaran seperti PAY-XXXX di teks OCR."""
     codes = set(re.findall(r"PAY-[A-Z0-9]{4,12}", ocr_upper))
     return sorted(codes)
+
+
+def parse_transaction_datetime(ocr_upper: str) -> datetime | None:
+    """Mencoba membaca tanggal & waktu transaksi dari teks OCR."""
+    month_map = {
+        "JAN": 1,
+        "JANUARI": 1,
+        "FEB": 2,
+        "FEBRUARI": 2,
+        "MAR": 3,
+        "MARET": 3,
+        "APR": 4,
+        "APRIL": 4,
+        "MEI": 5,
+        "JUN": 6,
+        "JUNI": 6,
+        "JUL": 7,
+        "JULI": 7,
+        "AGU": 8,
+        "AGUSTUS": 8,
+        "SEP": 9,
+        "SEPT": 9,
+        "SEPTEMBER": 9,
+        "OKT": 10,
+        "OKTOBER": 10,
+        "NOV": 11,
+        "NOVEMBER": 11,
+        "DES": 12,
+        "DESEMBER": 12,
+    }
+    date_regex = (
+        r"(\d{1,2})\s+("
+        r"JAN|JANUARI|FEB|FEBRUARI|MAR|MARET|APR|APRIL|MEI|"
+        r"JUN|JUNI|JUL|JULI|AGU|AGUSTUS|SEP|SEPT|SEPTEMBER|"
+        r"OKT|OKTOBER|NOV|NOVEMBER|DES|DESEMBER"
+        r")\s+(\d{4})"
+    )
+    date_match = re.search(date_regex, ocr_upper)
+    time_match = re.search(r"(\d{1,2}):(\d{2})", ocr_upper)
+
+    if not date_match:
+        return None
+
+    day_str, mon_str, year_str = date_match.groups()
+    try:
+        day = int(day_str)
+        year = int(year_str)
+        month = month_map.get(mon_str, None)
+        if month is None:
+            return None
+
+        hour = 12
+        minute = 0
+        if time_match:
+            hour = int(time_match.group(1))
+            minute = int(time_match.group(2))
+
+        return datetime(year, month, day, hour, minute)
+    except Exception:
+        return None
 
 
 def main() -> None:
@@ -79,7 +140,7 @@ def main() -> None:
     wallet = detect_wallet(ocr_upper)
 
     # Ambil kandidat nominal
-    amount_candidates = extract_amount_candidates(ocr_upper)
+    amount_candidates = extract_amount_candidates(ocr_text_str)
 
     # Cari kode pembayaran otomatis
     detected_codes = find_payment_codes(ocr_upper)
@@ -93,9 +154,19 @@ def main() -> None:
     if args.amount is not None:
         amount_found = args.amount in amount_candidates
 
+    # Coba baca tanggal & waktu transaksi
+    tx_dt = parse_transaction_datetime(ocr_upper)
+    tx_info = "-"
+    time_diff_info = "-"
+    if tx_dt is not None:
+        tx_info = tx_dt.strftime("%Y-%m-%d %H:%M")
+        diff_hours = abs(time.time() - tx_dt.timestamp()) / 3600.0
+        time_diff_info = f"{diff_hours:.1f} jam dari sekarang"
+
     print("=== HASIL OCR MANUAL (tesseract.py) ===")
-    print(f"Gambar           : {args.image}")
-    print(f"E-wallet terdeteksi : {wallet}")
+    print(f"Gambar               : {args.image}")
+    print(f"E-wallet terdeteksi  : {wallet}")
+    print(f"Tanggal/waktu terbaca: {tx_info} (selisih {time_diff_info})")
     print(f"Kode pembayaran terdeteksi (pola PAY-XXXX): {detected_codes or '-'}")
     print(f"Nominal terdeteksi (Rp ...): {amount_candidates or '-'}")
 
