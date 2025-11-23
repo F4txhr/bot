@@ -1,6 +1,7 @@
 import hmac
 import hashlib
 import re
+import asyncio
 from typing import Any, Dict
 
 from flask import Flask, request, jsonify
@@ -11,7 +12,17 @@ from telegram import Bot
 
 app = Flask(__name__)
 
+# Bot Telegram untuk mengirim notifikasi ke user setelah donasi Trakteer.
 bot: Bot | None = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
+
+# Event loop khusus untuk operasi async di dalam proses Flask (pytgram bot).
+loop: asyncio.AbstractEventLoop | None = None
+if bot is not None:
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
 
 def verify_trakteer_signature(raw_body: bytes) -> bool:
@@ -135,7 +146,7 @@ def trakteer_webhook() -> Any:
     r.setex(key, new_ttl, "1")
 
     # Beri tahu user di Telegram (jika memungkinkan)
-    if bot is not None:
+    if bot is not None and loop is not None:
         try:
             lang = get_user_language(user_id)
         except Exception:
@@ -159,7 +170,8 @@ def trakteer_webhook() -> Any:
             )
 
         try:
-            bot.send_message(chat_id=user_id, text=text)
+            # Jalankan send_message di event loop async.
+            loop.run_until_complete(bot.send_message(chat_id=user_id, text=text))
         except Exception as exc:  # pragma: no cover - hanya logging sederhana
             print(f"Failed to notify user {user_id}: {exc}")
 
