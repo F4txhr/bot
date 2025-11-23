@@ -125,17 +125,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 👋 **Selamat datang di ShadowChat!**
 Obrolan **anonim** dengan orang acak — tanpa nama, tanpa jejak.
 
-📌 **Perintah Utama:**
+📌 **Perintah utama:**
 • /search — Cari pasangan obrolan
 • /stop — Hentikan obrolan
-• /next — Skip ke pasangan berikutnya
+• /next — Ganti ke pasangan berikutnya
 • /premium — Info fitur premium
 • /stats — Lihat statistikmu
 
-💎 **Fitur Premium:**
+💎 **Fitur premium:**
 • /setgender — Atur jenis kelamin
 • /setinterest — Atur minat/hobi
-• /search [male/female] — Cari berdasarkan gender
+• /search [male/female] — Cari berdasarkan jenis kelamin
 
 🔧 **Lainnya:**
 • /showid — Bagikan profil Telegram-mu
@@ -143,7 +143,7 @@ Obrolan **anonim** dengan orang acak — tanpa nama, tanpa jejak.
 • /help — Tampilkan pesan ini
 
 🔒 Semua pesan **tidak disimpan**.
-⚠️ Jangan kirim konten ilegal.
+⚠️ Jangan kirim konten yang melanggar aturan.
 
 Ketik /search untuk mulai!
 """
@@ -164,10 +164,10 @@ async def premium_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 💎 **Fitur Premium ShadowChat**
 
 Dengan premium, kamu bisa:
-• 🔍 Cari berdasarkan gender (`/search male` atau `/search female`)
-• 🎯 Match berdasarkan minat/hobi yang sama
-• ⚡ Prioritas dalam queue pencarian
-• 📊 Statistik lengkap
+• 🔍 Cari berdasarkan jenis kelamin (`/search male` atau `/search female`)
+• 🎯 Dipertemukan berdasarkan minat/hobi yang sama
+• ⚡ Prioritas dalam antrian pencarian
+• 📊 Melihat statistik obrolan yang lebih lengkap
 
 💰 **Harga Premium:**
 • 3 hari → Rp 3.000
@@ -176,10 +176,10 @@ Dengan premium, kamu bisa:
 • 30 hari → Rp 30.000
 • 1 tahun → Rp 365.000
 
-📥 **Cara Aktifkan:**
+📥 **Cara aktifkan:**
 
-**Opsi 1: Trakteer (Recommended)**
-Klik tombol di bawah untuk bayar via Trakteer (QRIS/e-wallet)
+**Opsi 1: Trakteer (disarankan)**
+Klik tombol di bawah untuk bayar via Trakteer (QRIS / e-wallet)
 """
     
     keyboard = [
@@ -200,7 +200,7 @@ async def payment_manual_callback(update: Update, context: ContextTypes.DEFAULT_
     text = """
 📱 **Transfer Manual**
 
-Pilih durasi premium:
+Silakan pilih paket/durasi premium yang ingin kamu beli:
 """
     
     keyboard = []
@@ -298,7 +298,7 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"✅ **Pembayaran Berhasil!**\n\n"
         f"Premium aktif untuk {days_text}.\n"
-        f"Gunakan /setgender dan /setinterest untuk setup profile premium-mu!",
+        f"Gunakan /setgender dan /setinterest untuk mengatur profil premium-mu!",
         parse_mode="Markdown"
     )
     
@@ -313,16 +313,16 @@ async def set_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if not context.args:
-        await update.message.reply_text("Usage: /setgender male | female | skip")
+        await update.message.reply_text("Cara pakai: /setgender male | female | skip")
         return
     
     gender = context.args[0].lower()
     if gender not in ["male", "female", "skip"]:
-        await update.message.reply_text("Pilih: male, female, atau skip")
+        await update.message.reply_text("Pilih salah satu: male, female, atau skip")
         return
     
     r.set(f"user:{user_id}:gender", gender if gender != "skip" else "")
-    await update.message.reply_text(f"✅ Jenis kelamin disetel ke: {gender}")
+    await update.message.reply_text(f"✅ Jenis kelaminmu diatur ke: {gender}")
 
 async def set_interest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Set user interests/hobbies"""
@@ -338,7 +338,7 @@ async def set_interest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"**Minat yang tersedia:**\n{interests_list}\n\n"
             f"**Cara pakai:** /setinterest gaming music sports\n"
-            f"(Bisa pilih 1-3 minat)",
+            f"(Kamu bisa memilih 1–3 minat)",
             parse_mode="Markdown"
         )
         return
@@ -375,7 +375,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Cooldown check
     if is_search_cooldown(user_id, SEARCH_COOLDOWN):
-        await update.message.reply_text(f"⏳ Tunggu {SEARCH_COOLDOWN} detik sebelum search lagi.")
+        await update.message.reply_text(f"⏳ Tunggu {SEARCH_COOLDOWN} detik sebelum mencari lagi.")
         return
     
     is_premium = r.exists(f"user:{user_id}:premium")
@@ -394,14 +394,14 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif req == "any":
             target_queue = "queue:free"
         else:
-            await update.message.reply_text("Usage: /search [male|female|any]")
+            await update.message.reply_text("Cara pakai: /search [male|female|any]")
             return
     elif is_premium and user_gender:
         opposite = "female" if user_gender == "male" else "male"
         target_queue = f"queue:premium:{opposite}"
     elif not is_premium:
         if context.args:
-            await update.message.reply_text("🔒 Fitur ini hanya untuk premium. Ketik /premium.")
+            await update.message.reply_text("🔒 Fitur ini hanya untuk pengguna premium. Ketik /premium untuk info.")
             return
         target_queue = "queue:free"
     
@@ -471,7 +471,7 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
     
-    await update.message.reply_text("Obrolan dihentikan. Ketik /search untuk cari baru.")
+    await update.message.reply_text("Obrolan dihentikan. Ketik /search untuk mencari pasangan baru.")
 
 async def skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await stop(update, context)
@@ -496,7 +496,7 @@ async def showid(update: Update, context: ContextTypes.DEFAULT_TYPE):
             partner_id,
             f"👤 Partner ingin berbagi profil:\n{profile_link}"
         )
-        await update.message.reply_text("✅ Profile link terkirim ke partner!")
+        await update.message.reply_text("✅ Link profil terkirim ke partner!")
     else:
         await update.message.reply_text(
             "❌ Kamu belum set username Telegram.\n"
@@ -521,8 +521,8 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"LAPORAN: User {user_id} melaporkan {partner_id} (total: {report_count})")
     
-    # Auto-ban jika &gt;= 3 reports
-    if report_count &gt;= AUTO_BAN_REPORTS:
+    # Auto-ban jika >= 3 laporan
+    if report_count >= AUTO_BAN_REPORTS:
         ban_user(partner_id, "Auto-ban: Multiple reports")
         
         # Notify admins
@@ -531,7 +531,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(
                     admin_id,
                     f"🚨 **Auto-Ban Alert**\n"
-                    f"User `{partner_id}` telah di-ban otomatis.\n"
+                    f"Pengguna `{partner_id}` telah di-ban otomatis.\n"
                     f"Alasan: {report_count} laporan dalam 24 jam.",
                     parse_mode="Markdown"
                 )
@@ -540,7 +540,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(
             "✅ Terima kasih atas laporanmu.\n"
-            "User telah diblokir otomatis karena banyak laporan."
+            "Pengguna tersebut telah diblokir otomatis karena banyak laporan."
         )
     else:
         await update.message.reply_text("✅ Terima kasih atas laporanmu. Admin akan meninjau.")
@@ -564,14 +564,14 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     interests = ", ".join(stats["interests"]) if stats["interests"] else "Belum diatur"
     
     text = f"""
-📊 **Statistik Kamu**
+📊 **Statistik kamu**
 
 👤 **Status:** {premium_status}
-🔢 **Total Obrolan:** {stats['total_chats']}
-⚥ **Gender:** {gender}
+🔢 **Total obrolan:** {stats['total_chats']}
+⚥ **Jenis kelamin:** {gender}
 🎯 **Minat:** {interests}
 
-Ketik /premium untuk upgrade!
+Ketik /premium untuk info upgrade.
 """
     
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -582,7 +582,7 @@ async def grant_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if len(context.args) != 2:
-        await update.message.reply_text("Usage: /grant_premium <user_id> <days>")
+        await update.message.reply_text("Cara pakai: /grant_premium &lt;user_id&gt; &lt;days&gt;")
         return
     
     try:
@@ -596,7 +596,7 @@ async def grant_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 user_id, 
                 f"🎉 Premium kamu aktif untuk {days} hari!\n"
-                f"Gunakan /setgender dan /setinterest untuk setup.",
+                f"Gunakan /setgender dan /setinterest untuk mengatur profilmu.",
                 parse_mode="Markdown"
             )
         except:
@@ -610,7 +610,7 @@ async def gift_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if len(context.args) != 2:
-        await update.message.reply_text("Usage: /giftpremium <jumlah_user> <days>")
+        await update.message.reply_text("Cara pakai: /giftpremium &lt;jumlah_user&gt; &lt;days&gt;")
         return
     
     try:
@@ -621,7 +621,7 @@ async def gift_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         free_users = get_free_users()
         
         if not free_users:
-            await update.message.reply_text("❌ Tidak ada free user yang aktif.")
+            await update.message.reply_text("❌ Tidak ada pengguna gratis yang aktif dalam 24 jam terakhir.")
             return
         
         # Random select
@@ -644,7 +644,7 @@ async def gift_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         
         await update.message.reply_text(
-            f"✅ Premium diberikan ke {success}/{count} users untuk {days} hari."
+            f"✅ Premium diberikan ke {success}/{count} pengguna untuk {days} hari."
         )
         
         logger.info(f"Admin {update.effective_user.id} gifted premium to {success} users")
@@ -658,7 +658,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if not context.args:
-        await update.message.reply_text("Usage: /broadcast <pesan>")
+        await update.message.reply_text("Cara pakai: /broadcast &lt;pesan&gt;")
         return
     
     message = " ".join(context.args)
@@ -677,7 +677,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
     
-    await update.message.reply_text(f"✅ Broadcast terkirim ke {success} users.")
+    await update.message.reply_text(f"✅ Broadcast terkirim ke {success} pengguna.")
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show global statistics (admin only)"""
@@ -687,13 +687,13 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats = get_global_stats()
     
     text = f"""
-📊 **Global Statistics**
+📊 **Statistik global**
 
-👥 **Total Users:** {stats['total_users']}
-💬 **Active Sessions:** {stats['active_sessions']}
-⏳ **Queue Waiting:** {stats['queue_waiting']}
-💎 **Premium Users:** {stats['total_premium']}
-🚫 **Banned Users:** {stats['total_banned']}
+👥 **Total pengguna:** {stats['total_users']}
+💬 **Sesi aktif:** {stats['active_sessions']}
+⏳ **Sedang menunggu di antrian:** {stats['queue_waiting']}
+💎 **Pengguna premium:** {stats['total_premium']}
+🚫 **Pengguna yang diblokir:** {stats['total_banned']}
 """
     
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -713,10 +713,10 @@ async def list_banned(update: Update, context: ContextTypes.DEFAULT_TYPE):
             break
     
     if not banned_ids:
-        await update.message.reply_text("Tidak ada user yang dibanned.")
+        await update.message.reply_text("Tidak ada pengguna yang diblokir.")
     else:
         text = "📋 Daftar pengguna yang diblokir:\n" + "\n".join(banned_ids[:50])
-        if len(banned_ids) &gt; 50:
+        if len(banned_ids) > 50:
             text += f"\n\n... dan {len(banned_ids) - 50} lainnya"
         await update.message.reply_text(text)
 
@@ -725,14 +725,14 @@ async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if not context.args:
-        await update.message.reply_text("Usage: /unban <user_id>")
+        await update.message.reply_text("Cara pakai: /unban &lt;user_id&gt;")
         return
     
     try:
         user_id = int(context.args[0])
         unban_user(user_id)
         
-        await update.message.reply_text(f"✅ User {user_id} telah di-unban.")
+        await update.message.reply_text(f"✅ Pengguna {user_id} telah di-unban.")
         
         try:
             await context.bot.send_message(
