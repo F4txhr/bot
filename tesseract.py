@@ -18,9 +18,13 @@ def detect_wallet(ocr_upper: str) -> str:
 
 
 def extract_amount_candidates(ocr_upper: str) -> list[int]:
-    """Mengambil semua nominal yang diawali 'RP' dari teks OCR."""
+    """Mengambil semua nominal yang diawali 'RP' dari teks OCR.
+
+    Catatan: gunakan pola "RP\s*" (BUKAN "RP\\s*") supaya \s dikenali
+    sebagai whitespace oleh regex, bukan karakter backslash + 's'.
+    """
     candidates: set[int] = set()
-    for match in re.findall(r"RP\\s*([0-9][0-9\\.\\,]*)", ocr_upper):
+    for match in re.findall(r"RP\s*([0-9][0-9\.\,]*)", ocr_upper):
         cleaned = re.sub(r"[^0-9]", "", match)
         if cleaned:
             try:

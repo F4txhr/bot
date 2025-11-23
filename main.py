@@ -600,6 +600,7 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # "Rp150.000", "RP 7.000", dll.
     amount_candidates = set()
     try:
+        # Gunakan pola "RP\s*" (BUKAN "RP\\s*") agar \s dikenali sebagai whitespace.
         for match in re.findall(r"RP\s*([0-9][0-9\.\,]*)", ocr_upper):
             cleaned = re.sub(r"[^0-9]", "", match)
             if cleaned:
