@@ -57,11 +57,12 @@ def extract_user_id_from_message(message: str) -> int | None:
     Prioritas:
     1. Pola "ID: <user_id>"
     2. Pola kode unik seperti "SC<user_id>-XXXX"
+    3. Fallback: pesan yang isinya hanya angka (mis. "7446955510")
     """
     if not message:
         return None
 
-    # Pola lama: "ID: 123456789"
+    # 1) Pola eksplisit: "ID: 123456789"
     match = re.search(r"[Ii][Dd]\s*[:\-]?\s*(\d{5,15})", message)
     if match:
         try:
@@ -69,12 +70,20 @@ def extract_user_id_from_message(message: str) -> int | None:
         except ValueError:
             pass
 
-    # Pola baru: kode unik "SC<user_id>-ABCD"
+    # 2) Pola kode unik: "SC<user_id>-ABCD"
     upper = message.upper()
     match = re.search(r"SC(\d{5,15})-[A-Z0-9]{1,8}", upper)
     if match:
         try:
             return int(match.group(1))
+        except ValueError:
+            pass
+
+    # 3) Fallback: jika pesan hanya berisi angka 5–15 digit (misal "7446955510")
+    stripped = message.strip()
+    if re.fullmatch(r"\d{5,15}", stripped):
+        try:
+            return int(stripped)
         except ValueError:
             pass
 
