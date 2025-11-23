@@ -419,8 +419,8 @@ Catatan:
 
     keyboard = []
     for days, price in PREMIUM_PRICES.items():
-        days_text_id = f"{days} hari" if days &lt; 365 else "1 tahun"
-        days_text_en = f"{days} days" if days &lt; 365 else "1 year"
+        days_text_id = f"{days} hari" if days < 365 else "1 tahun"
+        days_text_en = f"{days} days" if days < 365 else "1 year"
         label = days_text_en if lang == "en" else days_text_id
         keyboard.append(
             [
@@ -448,8 +448,8 @@ async def payment_duration_callback(update: Update, context: ContextTypes.DEFAUL
     # Generate payment code
     code = create_payment_code(user_id, days, amount)
 
-    days_text_id = f"{days} hari" if days &lt; 365 else "1 tahun"
-    days_text_en = f"{days} days" if days &lt; 365 else "1 year"
+    days_text_id = f"{days} hari" if days < 365 else "1 tahun"
+    days_text_en = f"{days} days" if days < 365 else "1 year"
 
     if lang == "en":
         days_text = days_text_en
