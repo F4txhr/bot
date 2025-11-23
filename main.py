@@ -39,6 +39,7 @@ from utils import (
     set_user_language,
     get_trust_score,
     get_trust_level,
+    add_rating,
     r,
 )
 
@@ -830,7 +831,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text)
 
 async def _end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: str) -> None:
-    """Mengakhiri obrolan, dengan pesan berbeda untuk /stop dan /next."""
+    """Mengakhiri obrolan, dengan pesan berbeda untuk /stop dan /next, lalu minta rating/report."""
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
     update_user_activity(user_id)
@@ -901,6 +902,41 @@ async def _end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: st
 
     await update.message.reply_text(text_user)
 
+    # Kirim menu rating + report setelah obrolan berakhir
+    if partner_id:
+        if lang == "en":
+            text_feedback = (
+                "How was your chat experience?\n"
+                "You can also report your partner if needed."
+            )
+            keyboard = [
+                [
+                    InlineKeyboardButton("👍 Good chat", callback_data=f"rate_good:{partner_id}"),
+                    InlineKeyboardButton("😐 Just okay", callback_data=f"rate_neutral:{partner_id}"),
+                    InlineKeyboardButton("👎 Not pleasant", callback_data=f"rate_bad:{partner_id}"),
+                ],
+                [
+                    InlineKeyboardButton("🚨 Report this user", callback_data=f"report_menu:{partner_id}")
+                ],
+            ]
+        else:
+            text_feedback = (
+                "Bagaimana pengalaman obrolan barusan?\n"
+                "Kamu juga bisa melaporkan partner jika perlu."
+            )
+            keyboard = [
+                [
+                    InlineKeyboardButton("👍 Obrolan oke", callback_data=f"rate_good:{partner_id}"),
+                    InlineKeyboardButton("😐 Biasa saja", callback_data=f"rate_neutral:{partner_id}"),
+                    InlineKeyboardButton("👎 Tidak menyenangkan", callback_data=f"rate_bad:{partner_id}"),
+                ],
+                [
+                    InlineKeyboardButton("🚨 Laporkan pengguna", callback_data=f"report_menu:{partner_id}")
+                ],
+            ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(text_feedback, reply_markup=reply_markup)
+
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _end_chat(update, context, mode="stop")
@@ -955,7 +991,73 @@ async def showid(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         await update.message.reply_text(text)
 
+def build_report_text_and_keyboard(lang: str, partner_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Membangun teks dan keyboard alasan laporan untuk seorang partner."""
+    if lang == "en":
+        text = (
+            "Choose a reason to report this chat partner:\n\n"
+            "Please only report if they clearly broke the rules."
+        )
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🔞 Explicit sexual content", callback_data=f"rep_sex:{partner_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🤬 Harsh language / bullying", callback_data=f"rep_abuse:{partner_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🧨 Hate speech / discrimination", callback_data=f"rep_sara:{partner_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📨 Spam / promotion", callback_data=f"rep_spam:{partner_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton("Lainnya / Other", callback_data=f"rep_other:{partner_id}")
+            ],
+        ]
+    else:
+        text = (
+            "Pilih alasan laporan untuk partner obrolan ini:\n\n"
+            "Gunakan fitur ini hanya jika mereka jelas melanggar aturan."
+        )
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🔞 Konten seksual berlebihan", callback_data=f"rep_sex:{partner_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🤬 Kata-kata kasar / bullying", callback_data=f"rep_abuse:{partner_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🧨 SARA / kebencian", callback_data=f"rep_sara:{partner_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📨 Spam / promosi", callback_data=f"rep_spam:{partner_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton("Lainnya", callback_data=f"rep_other:{partner_id}")
+            ],
+        ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Memulai proses laporan selama masih dalam sesi chat (memunculkan menu alasan)."""
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
     update_user_activity(user_id)
@@ -967,9 +1069,59 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     partner_id = get_partner(user_id)
     if not partner_id:
-        text = "ℹ️ You are not currently in a chat." if lang == "en" else "ℹ️ Kamu tidak sedang dalam obrolan."
+        text = (
+            "ℹ️ You are not currently in a chat."
+            if lang == "en"
+            else "ℹ️ Kamu tidak sedang dalam obrolan."
+        )
         await update.message.reply_text(text)
         return
+
+    text, reply_markup = build_report_text_and_keyboard(lang, partner_id)
+    await update.message.reply_text(text, reply_markup=reply_markup)
+
+
+async def report_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback dari tombol 'Laporkan pengguna' setelah sesi berakhir."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    lang = get_user_language(user_id)
+
+    data = query.data or ""
+    parts = data.split(":", 1)
+    if len(parts) != 2:
+        return
+    try:
+        partner_id = int(parts[1])
+    except ValueError:
+        return
+
+    text, reply_markup = build_report_text_and_keyboard(lang, partner_id)
+    await query.edit_message_text(text, reply_markup=reply_markup)
+
+
+async def report_reason_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback ketika user memilih salah satu alasan laporan."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    lang = get_user_language(user_id)
+
+    data = query.data or ""
+    parts = data.split(":", 1)
+    if len(parts) != 2:
+        return
+
+    prefix = parts[0]  # contoh: "rep_sex"
+    try:
+        partner_id = int(parts[1])
+    except ValueError:
+        return
+
+    reason_code = prefix.replace("rep_", "", 1)
 
     # Tambahkan laporan dan turunkan trust user yang dilaporkan
     report_count = add_report(partner_id, user_id)
@@ -978,11 +1130,11 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info(
         f"LAPORAN: User {user_id} melaporkan {partner_id} "
-        f"(total: {report_count}, trust: {trust_score}, level: {trust_level})"
+        f"(reason={reason_code}, total={report_count}, trust={trust_score}, level={trust_level})"
     )
 
     # Logika auto-ban bertingkat:
-    # - User yang sudah di level "hell" dan masih sering dilaporkan -> kandidiat ban.
+    # - User yang sudah di level "hell" dan masih sering dilaporkan -> kandidat ban.
     # - Atau jika skor trust jatuh di bawah 0 (sangat sering dilaporkan).
     should_ban = False
     if trust_score <= 0:
@@ -1001,13 +1153,15 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     admin_text = (
                         "🚨 **Auto-ban alert**\n"
                         f"User `{partner_id}` has been automatically banned.\n"
-                        f"Reason: low trust score ({trust_score}) and {report_count} reports in 24 hours."
+                        f"Reason: low trust score ({trust_score}), "
+                        f"{report_count} reports in 24 hours, last reason: {reason_code}."
                     )
                 else:
                     admin_text = (
                         "🚨 **Auto-Ban Alert**\n"
                         f"Pengguna `{partner_id}` telah di-ban otomatis.\n"
-                        f"Alasan: skor trust rendah ({trust_score}) dan {report_count} laporan dalam 24 jam."
+                        f"Alasan: skor trust rendah ({trust_score}), "
+                        f"{report_count} laporan dalam 24 jam, alasan terakhir: {reason_code}."
                     )
                 await context.bot.send_message(admin_id, admin_text, parse_mode="Markdown")
             except Exception:
@@ -1023,14 +1177,48 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "✅ Terima kasih atas laporanmu.\n"
                 "Pengguna tersebut telah diblokir otomatis karena sering dilaporkan."
             )
-        await update.message.reply_text(text_user)
     else:
-        text = (
-            "✅ Thank you for your report. The admins will review it."
-            if lang == "en"
-            else "✅ Terima kasih atas laporanmu. Admin akan meninjau."
-        )
-        await update.message.reply_text(text)
+        if lang == "en":
+            text_user = "✅ Thank you for your report. The admins will review it."
+        else:
+            text_user = "✅ Terima kasih atas laporanmu. Admin akan meninjau."
+
+    # Edit pesan menu laporan menjadi pesan konfirmasi
+    await query.edit_message_text(text_user)
+
+
+async def rating_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback untuk rating setelah obrolan berakhir (👍 / 😐 / 👎)."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    lang = get_user_language(user_id)
+
+    data = query.data or ""
+    parts = data.split(":", 1)
+    if len(parts) != 2:
+        return
+
+    prefix = parts[0]  # contoh: "rate_good"
+    try:
+        partner_id = int(parts[1])
+    except ValueError:
+        return
+
+    rating_type = prefix.replace("rate_", "", 1)  # good / neutral / bad
+    add_rating(partner_id, rating_type)
+
+    logger.info(
+        f"RATING: User {user_id} memberi rating {rating_type} untuk {partner_id}"
+    )
+
+    if lang == "en":
+        text = "✅ Thanks for your feedback!"
+    else:
+        text = "✅ Terima kasih atas feedback-mu!"
+
+    await query.edit_message_text(text)
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Menampilkan statistik dasar user."""
@@ -1429,6 +1617,9 @@ def main():
     application.add_handler(CallbackQueryHandler(payment_manual_callback, pattern="^payment_manual$"))
     application.add_handler(CallbackQueryHandler(payment_duration_callback, pattern="^pay_"))
     application.add_handler(CallbackQueryHandler(language_callback, pattern="^lang_"))
+    application.add_handler(CallbackQueryHandler(rating_callback, pattern="^rate_"))
+    application.add_handler(CallbackQueryHandler(report_menu_callback, pattern="^report_menu"))
+    application.add_handler(CallbackQueryHandler(report_reason_callback, pattern="^rep_"))
     
     # Message handler
     application.add_handler(MessageHandler(

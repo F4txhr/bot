@@ -263,10 +263,20 @@ def get_user_stats(user_id: int) -> dict:
 
     return stats
 
+
 def increment_chat_count(user_id: int) -> None:
     """Menambah total jumlah obrolan untuk user."""
     key = f"stats:{user_id}:total_chats"
     r.incr(key)
+
+
+def add_rating(user_id: int, rating: str) -> None:
+    """Menambahkan rating untuk user (good/neutral/bad)."""
+    if rating not in {"good", "neutral", "bad"}:
+        return
+    key = f"rating:{user_id}:{rating}"
+    r.incr(key)
+
 
 def get_global_stats() -> dict:
     """Mengembalikan statistik global untuk keperluan admin."""
