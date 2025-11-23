@@ -1641,12 +1641,6 @@ async def paymanual(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text_user)
 
 
-async def set_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):"Admin {update.effective_user.id} gifted premium to {success} users")
-
-    except ValueError:
-        text = "User count and days must be numbers." if admin_lang == "en" else "Jumlah dan hari harus angka."
-        await update.message.reply_text(text)
-
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mengirim pesan broadcast ke semua pengguna aktif (admin only)."""
     if update.effective_user.id not in ADMIN_IDS:
