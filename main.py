@@ -146,7 +146,8 @@ async def forward_to_partner(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 # --- COMMANDS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_id = user.id
     lang = get_user_language(user_id)
     update_user_activity(user_id)
 
@@ -158,58 +159,62 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text)
         return
 
-    text_id = """
-👋 **Selamat datang di ShadowChat!**
-Obrolan **anonim** dengan orang acak — tanpa nama, tanpa jejak.
+    raw_name = user.first_name or user.username
+    if lang == "en":
+        name = raw_name or "there"
+    else:
+        name = raw_name or "kamu"
 
-📌 **Perintah utama:**
-• /search — Cari pasangan obrolan
-• /stop — Hentikan obrolan
-• /next — Ganti ke pasangan berikutnya
-• /premium — Info fitur premium
-• /stats — Lihat statistikmu
+    text_id = f"""
+👋 Hai, {name}!
 
-💎 **Fitur premium:**
-• /setgender — Atur jenis kelamin
-• /setinterest — Atur minat/hobi
-• /search [male/female] — Cari berdasarkan jenis kelamin
+Selamat datang di **ShadowChat** — tempat kamu bisa ngobrol **anonim** dengan orang baru ✨
 
-🔧 **Lainnya:**
-• /showid — Bagikan profil Telegram-mu
-• /report — Laporkan pelanggaran
-• /help — Tampilkan pesan ini
+🎯 **Cara pakai singkat:**
+• `/search` — cari pasangan obrolan
+• `/stop` — hentikan obrolan yang sedang berjalan
+• `/next` — ganti ke pasangan berikutnya
+• `/showid` — kirim link profil Telegram-mu ke partner
+• `/report` — laporkan pengguna yang melanggar aturan
 
-🔒 Semua pesan **tidak disimpan**.
-⚠️ Jangan kirim konten yang melanggar aturan.
+💎 **Pengen lebih terarah?**
+Aktifkan premium untuk:
+• Cari berdasarkan gender
+• Cocokkan berdasarkan minat
+• Prioritas dalam antrian
+• Statistik obrolan yang lebih lengkap
 
-Ketik /search untuk mulai!
+⚠️ **Catatan penting:**
+Jangan kirim konten ilegal, SARA, atau hal yang mengganggu pengguna lain.
+Semua obrolan bersifat anonim — jaga sopan santun ya 😊
+
+Siap ngobrol? Ketik `/search` sekarang!
 """
 
-    text_en = """
-👋 **Welcome to ShadowChat!**
-Anonymous chat with random people — no name, no trace.
+    text_en = f"""
+👋 Hey, {name}!
 
-📌 **Main commands:**
-• /search — Find a chat partner
-• /stop — End the current chat
-• /next — Switch to the next partner
-• /premium — Premium features info
-• /stats — See your stats
+Welcome to **ShadowChat** — an app for **anonymous** chats with new people ✨
 
-💎 **Premium features:**
-• /setgender — Set your gender
-• /setinterest — Set your interests/hobbies
-• /search [male/female] — Search by gender
+🎯 **Quick guide:**
+• `/search` — find a chat partner
+• `/stop` — end the current chat
+• `/next` — switch to the next partner
+• `/showid` — share your Telegram profile with your partner
+• `/report` — report users who break the rules
 
-🔧 **Others:**
-• /showid — Share your Telegram profile
-• /report — Report violations
-• /help — Show this help message
+💎 **Want a better match?**
+Get premium to:
+• Search by gender
+• Match based on interests
+• Get priority in the queue
+• See more detailed chat stats
 
-🔒 No messages are **stored**.
-⚠️ Do not send illegal or harmful content.
+⚠️ **Important:**
+Do not send illegal, hateful, or harmful content.
+All chats are anonymous — please be respectful 😊
 
-Type /search to start!
+Ready to chat? Type `/search` now!
 """
 
     text = text_en if lang == "en" else text_id
@@ -753,7 +758,8 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = "🔍 Mencari pasangan...\nKetik /stop untuk batal."
         await update.message.reply_text(text)
 
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def _end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: str) -> None:
+    """Mengakhiri obrolan, dengan pesan berbeda untuk /stop dan /next."""
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
     update_user_activity(user_id)
@@ -773,26 +779,64 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     r.delete(session_key)
     r.delete(f"user:{user_id}")
 
+    # Beri tahu partner bahwa obrolan diakhiri oleh user
     if partner_id:
         r.delete(f"user:{partner_id}")
         try:
             partner_lang = get_user_language(partner_id)
             if partner_lang == "en":
-                text_partner = "💬 The chat has ended.\nType /search to find a new partner."
+                partner_text = (
+                    "😕 Your chat partner has ended the conversation.\n\n"
+                    "Don't worry, maybe the next one will be a better match 😉\n"
+                    "Type /search to look for a new partner."
+                )
             else:
-                text_partner = "💬 Obrolan berakhir.\nKetik /search untuk cari baru."
-            await context.bot.send_message(partner_id, text_partner)
+                partner_text = (
+                    "😕 Partner kamu baru saja mengakhiri obrolan.\n\n"
+                    "Tenang, mungkin yang berikutnya lebih seru 😉\n"
+                    "Ketik /search untuk mencari pasangan baru."
+                )
+            await context.bot.send_message(partner_id, partner_text)
         except Exception:
             pass
 
-    if lang == "en":
-        text_user = "The chat has been ended. Type /search to find a new partner."
-    else:
-        text_user = "Obrolan dihentikan. Ketik /search untuk mencari pasangan baru."
+    # Pesan untuk user yang mengetik /stop atau /next
+    if mode == "next":
+        if lang == "en":
+            text_user = (
+                "⏭ You skipped this partner.\n\n"
+                "Hopefully the next one will be a better match!\n"
+                "Type /search again anytime to look for a new partner ✨"
+            )
+        else:
+            text_user = (
+                "⏭ Kamu melewati partner ini.\n\n"
+                "Semoga partner berikutnya lebih cocok!\n"
+                "Ketik /search lagi kapan saja kalau mau mencari pasangan baru ✨"
+            )
+    else:  # mode == "stop"
+        if lang == "en":
+            text_user = (
+                "🛑 You ended this chat.\n\n"
+                "No worries, not every conversation has to last forever 🙂\n"
+                "If you want to talk to someone new, just type /search."
+            )
+        else:
+            text_user = (
+                "🛑 Kamu telah menghentikan obrolan ini.\n\n"
+                "Tidak masalah, kadang obrolan memang cukup sampai di sini 🙂\n"
+                "Kalau mau lanjut dengan orang baru, ketik saja /search."
+            )
+
     await update.message.reply_text(text_user)
 
+
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _end_chat(update, context, mode="stop")
+
+
 async def skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await stop(update, context)
+    await _end_chat(update, context, mode="next")
 
 async def showid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mengirim link profil Telegram ke partner saat ini."""
