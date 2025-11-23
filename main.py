@@ -1,7 +1,12 @@
 import asyncio
 import logging
 import redis
+import io
+import time
+import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from PIL import Image
+import pytesseract
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -494,14 +499,25 @@ async def payment_duration_callback(update: Update, context: ContextTypes.DEFAUL
     await query.edit_message_text(text, parse_mode="Markdown")
 
 async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Auto-verify screenshot pembayaran/manual payment."""
+    """Verifikasi otomatis screenshot pembayaran manual menggunakan OCR (pytesseract).
+
+    Alur:
+    - Cari payment code aktif milik user (PAY-XXXX).
+    - Jalankan OCR pada gambar untuk mencari KODE PEMBAYARAN di teks (misal di Catatan/Pesan).
+    - Jika kode ditemukan -> anggap valid, aktifkan premium.
+    - Jika gagal ditemukan -> simpan data gagal dan minta user pakai /paymanual untuk cek admin.
+
+    Catatan:
+    - Untuk akurasi terbaik, minta user mengisi kolom Catatan/Pesan dengan KODE PEMBAYARAN.
+    - Contoh di DANA: bagian \"Catatan\" di detail transaksi.
+    """
     if not update.message.photo:
         return
 
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
 
-    # Cek apakah user sedang menunggu verifikasi pembayaran
+    # Cari payment code yang masih aktif untuk user ini
     payment_keys = r.keys("payment:PAY-*")
     user_payment = None
 
@@ -517,41 +533,103 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_payment:
         return
 
-    # Simulasi proses verifikasi (di production gunakan OCR/AI/dll)
-    if lang == "en":
-        wait_text = "🔍 Verifying your payment..."
-    else:
-        wait_text = "🔍 Memverifikasi pembayaran..."
-
-    await update.message.reply_text(wait_text)
-    await asyncio.sleep(2)
-
-    # Grant premium (di sini diasumsikan pembayaran valid)
+    code = user_payment["code"]
+    amount = user_payment["amount"]
     days = user_payment["days"]
-    r.setex(f"user:{user_id}:premium", days * 86400, "1")
-    delete_payment_code(user_payment["code"])
 
-    days_text_id = f"{days} hari" if days < 365 else "1 tahun"
-    days_text_en = f"{days} days" if days < 365 else "1 year"
-
+    # Beri tahu user bahwa verifikasi sedang diproses
     if lang == "en":
-        days_text = days_text_en
-        success_text = (
-            f"✅ **Payment successful!**\n\n"
-            f"Your premium is now active for {days_text}.\n"
-            f"Use /setgender and /setinterest to set up your premium profile."
+        wait_text = (
+            "🔍 Verifying your payment...\n"
+            "Please wait while the bot reads the details from your screenshot."
         )
     else:
-        days_text = days_text_id
-        success_text = (
-            f"✅ **Pembayaran berhasil!**\n\n"
-            f"Premium aktif untuk {days_text}.\n"
-            f"Gunakan /setgender dan /setinterest untuk mengatur profil premium-mu!"
+        wait_text = (
+            "🔍 Memverifikasi pembayaran...\n"
+            "Tunggu sebentar, bot sedang membaca detail dari screenshot kamu."
+        )
+    await update.message.reply_text(wait_text)
+
+    # Unduh gambar dengan resolusi tertinggi
+    try:
+        photo = update.message.photo[-1]
+        file = await photo.get_file()
+        image_bytes = await file.download_as_bytearray()
+        image = Image.open(io.BytesIO(image_bytes))
+
+        # Jalankan OCR (Indonesia + English)
+        ocr_text = pytesseract.image_to_string(image, lang="ind+eng")
+    except Exception as exc:
+        logger.warning(f"OCR failed for user {user_id}: {exc}")
+        ocr_text = ""
+
+    # Normalisasi teks OCR untuk pencarian
+    ocr_upper = ocr_text.upper() if isinstance(ocr_text, str) else ""
+    code_upper = code.upper()
+
+    # Minimal: kode pembayaran harus muncul di teks OCR (di Catatan/Pesan atau bagian lain)
+    verification_ok = code_upper in ocr_upper
+
+    if verification_ok:
+        # Verifikasi berhasil -> aktifkan premium
+        r.setex(f"user:{user_id}:premium", days * 86400, "1")
+        delete_payment_code(code)
+
+        days_text_id = f"{days} hari" if days < 365 else "1 tahun"
+        days_text_en = f"{days} days" if days < 365 else "1 year"
+
+        if lang == "en":
+            success_text = (
+                f"✅ **Payment successful!**\n\n"
+                f"Your premium is now active for {days_text_en}.\n"
+                f"Use /setgender and /setinterest to set up your premium profile."
+            )
+        else:
+            success_text = (
+                f"✅ **Pembayaran berhasil!**\n\n"
+                f"Premium aktif untuk {days_text_id}.\n"
+                f"Gunakan /setgender dan /setinterest untuk mengatur profil premium-mu!"
+            )
+
+        await update.message.reply_text(success_text, parse_mode="Markdown")
+        logger.info(
+            f"Premium granted to {user_id} for {days} days via manual payment (code={code})"
+        )
+        return
+
+    # Jika verifikasi otomatis gagal, simpan data untuk pengecekan manual
+    failed_key = f"payment_failed:{user_id}"
+    r.hset(
+        failed_key,
+        mapping={
+            "code": code,
+            "amount": amount,
+            "days": days,
+            "ocr_text": ocr_text or "",
+            "photo_file_id": update.message.photo[-1].file_id,
+            "timestamp": int(time.time()),
+        },
+    )
+    r.expire(failed_key, 86400)  # Simpan 24 jam
+
+    if lang == "en":
+        fail_text = (
+            "⚠️ The bot could not automatically verify your payment screenshot.\n\n"
+            "Please make sure that the PAYMENT CODE (for example `PAY-XXXX`) is written in the "
+            "Notes/Message field of your transfer.\n\n"
+            "If you are sure everything is correct, type /paymanual so the admin can check it manually."
+        )
+    else:
+        fail_text = (
+            "⚠️ Bot belum bisa memverifikasi bukti pembayaran kamu secara otomatis.\n\n"
+            "Pastikan **KODE PEMBAYARAN** (misalnya `PAY-XXXX`) ditulis di kolom Catatan/Pesan transaksi.\n\n"
+            "Jika kamu yakin sudah benar, ketik /paymanual supaya admin bisa cek secara manual."
         )
 
-    await update.message.reply_text(success_text, parse_mode="Markdown")
-
-    logger.info(f"Premium granted to {user_id} for {days} days via manual payment")
+    await update.message.reply_text(fail_text, parse_mode="Markdown")
+    logger.info(
+        f"Manual payment verification FAILED for user {user_id}, code={code}, amount={amount}"
+    )
 
 async def set_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1396,7 +1474,98 @@ async def gift_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text_admin = f"✅ Premium diberikan ke {success}/{count} pengguna untuk {days} hari."
         await update.message.reply_text(text_admin)
 
-        logger.info(f"Admin {update.effective_user.id} gifted premium to {success} users")
+        logger.info(f"Premium granted to {user_id} for {days} days via manual payment")
+
+
+async def paymanual(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Meminta verifikasi manual ke admin untuk pembayaran yang gagal diverifikasi otomatis."""
+    user_id = update.effective_user.id
+    lang = get_user_language(user_id)
+    update_user_activity(user_id)
+
+    failed_key = f"payment_failed:{user_id}"
+    data = r.hgetall(failed_key)
+
+    if not data:
+        if lang == "en":
+            text = (
+                "ℹ️ There is no pending payment that failed automatic verification.\n"
+                "If you have already paid, please send your payment screenshot again."
+            )
+        else:
+            text = (
+                "ℹ️ Tidak ada pembayaran tertunda yang gagal diverifikasi otomatis.\n"
+                "Jika kamu sudah membayar, kirim lagi screenshot bukti pembayaranmu."
+            )
+        await update.message.reply_text(text)
+        return
+
+    code = data.get("code", "")
+    amount = int(data.get("amount", 0)) if data.get("amount") else 0
+    days = int(data.get("days", 0)) if data.get("days") else 0
+    ocr_text = data.get("ocr_text", "")
+    photo_file_id = data.get("photo_file_id")
+
+    # Kirim ke semua admin untuk dicek manual
+    for admin_id in ADMIN_IDS:
+        try:
+            admin_lang = get_user_language(admin_id)
+        except Exception:
+            admin_lang = "id"
+
+        if admin_lang == "en":
+            caption = (
+                "📩 Manual payment verification request\n\n"
+                f"User ID: `{user_id}`\n"
+                f"Payment code: `{code}`\n"
+                f"Amount: Rp {amount:,}\n"
+                f"Days: {days}\n\n"
+                f"OCR text (for reference):\n{ocr_text[:800]}"
+            )
+        else:
+            caption = (
+                "📩 Permintaan verifikasi manual pembayaran\n\n"
+                f"User ID: `{user_id}`\n"
+                f"Kode pembayaran: `{code}`\n"
+                f"Jumlah: Rp {amount:,}\n"
+                f"Durasi: {days} hari\n\n"
+                f"Teks OCR (referensi):\n{ocr_text[:800]}"
+            )
+
+        try:
+            if photo_file_id:
+                await context.bot.send_photo(
+                    chat_id=admin_id,
+                    photo=photo_file_id,
+                    caption=caption,
+                    parse_mode="Markdown",
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=caption,
+                    parse_mode="Markdown",
+                )
+        except Exception as exc:
+            logger.warning(f"Gagal mengirim permintaan paymanual ke admin {admin_id}: {exc}")
+
+    # Hapus data gagal agar tidak dikirim berkali-kali
+    r.delete(failed_key)
+
+    if lang == "en":
+        text_user = (
+            "✅ Your manual verification request has been sent to the admin.\n"
+            "Please wait while they review your payment."
+        )
+    else:
+        text_user = (
+            "✅ Permintaan verifikasi manual sudah dikirim ke admin.\n"
+            "Mohon tunggu, admin akan mengecek pembayaranmu."
+        )
+    await update.message.reply_text(text_user)
+
+
+async def set_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):"Admin {update.effective_user.id} gifted premium to {success} users")
 
     except ValueError:
         text = "User count and days must be numbers." if admin_lang == "en" else "Jumlah dan hari harus angka."
@@ -1610,6 +1779,7 @@ def main():
     application.add_handler(CommandHandler("report", report))
     application.add_handler(CommandHandler("appeal", appeal))
     application.add_handler(CommandHandler("stats", stats))
+    application.add_handler(CommandHandler("paymanual", paymanual))
     
     # Admin commands
     application.add_handler(CommandHandler("grant_premium", grant_premium))
