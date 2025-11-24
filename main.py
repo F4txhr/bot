@@ -3292,7 +3292,9 @@ async def search_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Kamu juga bisa tap 'cancel' untuk kembali."
         )
 
-    await update.message.reply_text(text, reply_markup=build_gender_choice_keyboard())al(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(text, reply_markup=build_gender_choice_keyboard())
+
+async def appeal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
     
