@@ -2775,6 +2775,294 @@ async def payhistory(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cek cepat apakah bot & Redis berjalan (admin only)."""
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        return
+
+    lang = get_user_language(user_id)
+
+    redis_ok = True
+    redis_latency_ms = None
+    try:
+        start = time.time()
+        r.ping()
+        redis_latency_ms = int((time.time() - start) * 1000)
+    except Exception:
+        redis_ok = False
+
+    if lang == "en":
+        text = "🏓 *PONG*\n\n"
+        text += "Bot: OK\n"
+        text += f"Redis: {'OK' if redis_ok else 'FAIL'}"
+        if redis_latency_ms is not None:
+            text += f" (ping ~{redis_latency_ms} ms)"
+    else:
+        text = "🏓 *PONG*\n\n"
+        text += "Bot: OK\n"
+        text += f"Redis: {'OK' if redis_ok else 'GAGAL'}"
+        if redis_latency_ms is not None:
+            text += f" (latensi ~{redis_latency_ms} ms)"
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def discount_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Menampilkan ringkasan semua kode diskon (admin only)."""
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+
+    admin_lang = get_user_language(update.effective_user.id)
+
+    cursor = 0
+    entries: list[dict] = []
+    while True:
+        cursor, keys = r.scan(cursor=cursor, match="discount:*", count=50)
+        for key in keys:
+            parts = key.split(":")
+            if len(parts) != 2:
+                continue
+            raw_code = parts[1]
+            data = r.hgetall(key)
+            if not data:
+                continue
+            try:
+                code = data.get("code", raw_code)
+                percent = int(data.get("percent", 0))
+                max_uses = int(data.get("max_uses", 0))
+                used = int(data.get("used", 0))
+                min_amount = int(data.get("min_amount", 0)) if data.get("min_amount") else 0
+                expire_at = int(data.get("expire_at", 0))
+                created_at = int(data.get("created_at", 0)) if data.get("created_at") else 0
+                disabled = int(data.get("disabled", 0)) if data.get("disabled") else 0
+            except (TypeError, ValueError):
+                continue
+
+            now = int(time.time())
+            if expire_at > 0 and now > expire_at:
+                status = "expired"
+            elif max_uses > 0 and used >= max_uses:
+                status = "exhausted"
+            elif disabled:
+                status = "disabled"
+            else:
+                status = "active"
+
+            # Hitung user unik yang pernah memakai kode ini
+            usage_pattern = f"discount_usage:{code}:*"
+            u_cursor = 0
+            unique_users = 0
+            while True:
+                u_cursor, u_keys = r.scan(cursor=u_cursor, match=usage_pattern, count=100)
+                unique_users += len(u_keys)
+                if u_cursor == 0:
+                    break
+
+            entries.append(
+                {
+                    "code": code,
+                    "percent": percent,
+                    "max_uses": max_uses,
+                    "used": used,
+                    "min_amount": min_amount,
+                    "expire_at": expire_at,
+                    "created_at": created_at,
+                    "status": status,
+                    "unique_users": unique_users,
+                }
+            )
+        if cursor == 0:
+            break
+
+    if not entries:
+        text = "ℹ️ No discount codes found." if admin_lang == "en" else "ℹ️ Belum ada kode diskon."
+        await update.message.reply_text(text)
+        return
+
+    # Urutkan: aktif dulu, lalu lainnya
+    status_order = {"active": 0, "exhausted": 1, "expired": 2, "disabled": 3}
+    entries.sort(key=lambda x: (status_order.get(x["status"], 99), x["code"]))
+
+    lines: list[str] = []
+    now = int(time.time())
+    for info in entries:
+        code = info["code"]
+        percent = info["percent"]
+        max_uses = info["max_uses"]
+        used = info["used"]
+        min_amount = info["min_amount"]
+        expire_at = info["expire_at"]
+        status = info["status"]
+        unique_users = info["unique_users"]
+
+        if expire_at > 0:
+            dt = datetime.fromtimestamp(expire_at)
+            expire_str = dt.strftime("%Y-%m-%d %H:%M")
+        else:
+            expire_str = "no time limit" if admin_lang == "en" else "tanpa batas waktu"
+
+        if max_uses <= 0:
+            usage_str_en = f"{used} uses (unlimited)"
+            usage_str_id = f"{used}x (tanpa batas)"
+        else:
+            remaining = max(max_uses - used, 0)
+            usage_str_en = f"{used} uses, {remaining} left (of {max_uses})"
+            usage_str_id = f"{used}x, sisa {remaining} dari {max_uses}"
+
+        if admin_lang == "en":
+            line = (
+                f"- `{code}` — {percent}% off, min Rp {min_amount:,}, "
+                f"status={status}, {usage_str_en}, users={unique_users}, "
+                f"valid until {expire_str}"
+            )
+        else:
+            line = (
+                f"- `{code}` — diskon {percent}%, min Rp {min_amount:,}, "
+                f"status={status}, {usage_str_id}, user={unique_users}, "
+                f"berlaku sampai {expire_str}"
+            )
+        lines.append(line)
+
+    header = (
+        "🎁 *Discount code stats:*\n\n"
+        if admin_lang == "en"
+        else "🎁 *Statistik kode diskon:*\n\n"
+    )
+    text = header + "\n".join(lines)
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def discount_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Menampilkan daftar user yang pernah memakai kode diskon tertentu (admin only)."""
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+
+    admin_lang = get_user_language(update.effective_user.id)
+
+    if not context.args:
+        if admin_lang == "en":
+            text = "Usage: /discountusers <code>"
+        else:
+            text = "Cara pakai: /discountusers <kode>"
+        await update.message.reply_text(text)
+        return
+
+    raw_code = context.args[0]
+    # Normalisasi sederhana: kapital dan hanya A-Z/0-9
+    norm_code = re.sub(r"[^A-Z0-9]", "", raw_code.upper())
+    if not norm_code:
+        if admin_lang == "en":
+            text = "Invalid discount code format."
+        else:
+            text = "Format kode diskon tidak valid."
+        await update.message.reply_text(text)
+        return
+
+    # Cari semua user yang punya usage untuk kode ini
+    pattern = f"discount_usage:{norm_code}:*"
+    cursor = 0
+    items: list[tuple[int, int]] = []
+    while True:
+        cursor, keys = r.scan(cursor=cursor, match=pattern, count=100)
+        for key in keys:
+            parts = key.split(":")
+            if len(parts) != 3:
+                continue
+            try:
+                uid = int(parts[2])
+                cnt = int(r.get(key) or 0)
+            except (TypeError, ValueError):
+                continue
+            items.append((uid, cnt))
+        if cursor == 0:
+            break
+
+    if not items:
+        if admin_lang == "en":
+            text = f"ℹ️ No usage found for discount code `{norm_code}`."
+        else:
+            text = f"ℹ️ Belum ada user yang memakai kode `{norm_code}`."
+        await update.message.reply_text(text, parse_mode="Markdown")
+        return
+
+    # Urutkan dari yang paling banyak memakai
+    items.sort(key=lambda x: (-x[1], x[0]))
+
+    lines: list[str] = []
+    for uid, cnt in items[:100]:
+        if admin_lang == "en":
+            line = f"- User `{uid}` — used {cnt} time(s)"
+        else:
+            line = f"- User `{uid}` — dipakai {cnt}x"
+        lines.append(line)
+
+    if admin_lang == "en":
+        header = f"🎁 *Users who used discount `{norm_code}`:*\n\n"
+    else:
+        header = f"🎁 *User yang pernah memakai kode `{norm_code}`:*\n\n"
+
+    text = header + "\n".join(lines)
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def clear_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Menonaktifkan (disable) sebuah kode diskon (admin only)."""
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+
+    admin_lang = get_user_language(update.effective_user.id)
+
+    if not context.args:
+        if admin_lang == "en":
+            text = "Usage: /cleardiscount <code>"
+        else:
+            text = "Cara pakai: /cleardiscount <kode>"
+        await update.message.reply_text(text)
+        return
+
+    raw_code = context.args[0]
+    norm_code = re.sub(r"[^A-Z0-9]", "", raw_code.upper())
+    if not norm_code:
+        if admin_lang == "en":
+            text = "Invalid discount code format."
+        else:
+            text = "Format kode diskon tidak valid."
+        await update.message.reply_text(text)
+        return
+
+    key = f"discount:{norm_code}"
+    if not r.exists(key):
+        if admin_lang == "en":
+            text = f"❌ Discount code `{norm_code}` not found."
+        else:
+            text = f"❌ Kode diskon `{norm_code}` tidak ditemukan."
+        await update.message.reply_text(text, parse_mode="Markdown")
+        return
+
+    # Set flag disabled=1
+    r.hset(key, "disabled", 1)
+
+    # Hapus kode dari semua user_discount yang sedang aktif
+    cursor = 0
+    while True:
+        cursor, keys = r.scan(cursor=cursor, match="user_discount:*", count=100)
+        for ukey in keys:
+            val = r.get(ukey)
+            if not val:
+                continue
+            if re.sub(r"[^A-Z0-9]", "", val.upper()) == norm_code:
+                r.delete(ukey)
+        if cursor == 0:
+            break
+
+    if admin_lang == "en":
+        text = f"✅ Discount code `{norm_code}` has been disabled and removed from active users."
+    else:
+        text = f"✅ Kode diskon `{norm_code}` telah dinonaktifkan dan dihapus dari user yang masih memasangnya."
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mengirim pesan broadcast ke semua pengguna aktif (admin only)."""
     if update.effective_user.id not in ADMIN_IDS:
@@ -2987,6 +3275,7 @@ def main():
     application.add_handler(CommandHandler("discount", apply_discount))
     
     # Admin commands
+    application.add_handler(CommandHandler("ping", ping))
     application.add_handler(CommandHandler("grant_premium", grant_premium))
     application.add_handler(CommandHandler("giftpremium", gift_premium))
     application.add_handler(CommandHandler("broadcast", broadcast))
@@ -2994,6 +3283,9 @@ def main():
     application.add_handler(CommandHandler("list_banned", list_banned))
     application.add_handler(CommandHandler("unban", unban))
     application.add_handler(CommandHandler("creatediscount", create_discount))
+    application.add_handler(CommandHandler("discountstats", discount_stats))
+    application.add_handler(CommandHandler("discountusers", discount_users))
+    application.add_handler(CommandHandler("cleardiscount", clear_discount))
     application.add_handler(CommandHandler("payhistory", payhistory))
     
     # Callback handlers
