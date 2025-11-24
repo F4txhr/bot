@@ -642,8 +642,17 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if filtered_amounts:
         amount_candidates = set(filtered_amounts)
     else:
-        # Jika tidak ditemukan label spesifik, gunakan semua nominal yang terdeteksi
-        amount_candidates = {amt for amt, _ in amount_matches}
+        # Jika tidak ditemukan label spesifik:
+        # - Untuk GOPAY, abaikan baris yang mengandung BIAYA/ADMIN agar tidak mengambil biaya admin.
+        # - Untuk yang lain, gunakan semua nominal yang terdeteksi.
+        if wallet == "GOPAY":
+            amount_candidates = {
+                amt
+                for amt, line in amount_matches
+                if "BIAYA" not in line and "ADMIN" not in line
+            }
+        else:
+            amount_candidates = {amt for amt, _ in amount_matches}
 
     amount_found = amount in amount_candidates
 
