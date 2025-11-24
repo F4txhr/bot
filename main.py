@@ -5,7 +5,13 @@ import io
 import time
 import re
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
 from PIL import Image
 import pytesseract
 from telegram.ext import (
@@ -20,7 +26,7 @@ from telegram.constants import ChatAction
 from config import (
     BOT_TOKEN, REDIS_URL, ADMIN_IDS, 
     PREMIUM_PRICES, E_WALLET_NUMBER, E_WALLET_NAME,
-    TRAKTEER_URL, AVAILABLE_INTERESTS, SEARCH_COOLDOWN,
+    TRAKTEER_URL, SEARCH_COOLDOWN,
     AUTO_BAN_REPORTS,
     PAYMENT_LOG_CHAT_ID, PAYMENT_LOG_TOPIC_ID,
     REPORT_LOG_CHAT_ID, REPORT_LOG_TOPIC_ID,
@@ -78,6 +84,46 @@ def get_partner(user_id: int) -> int | None:
         return int(user_b) if user_b else None
     else:
         return int(user_a) if user_a else None
+
+
+# Helper: reply keyboard
+
+def build_idle_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    """
+    Keyboard saat user idle (tidak sedang dalam obrolan).
+    Fokus pada: search biasa, search by gender, premium, stats.
+    """
+    keyboard = [
+        ["/search", "/search_gender"],
+        ["/premium", "/stats"],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+
+def build_chat_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    """
+    Keyboard saat user sedang dalam obrolan.
+    Fokus pada: next, stop, report, showid.
+    """
+    keyboard = [
+        ["/next", "/stop"],
+        ["/report", "/showid"],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+
+def build_gender_choice_keyboard() -> ReplyKeyboardMarkup:
+    """
+    Keyboard sementara untuk memilih target gender ketika user premium
+    memakai /search_gender.
+    Menggunakan kata kunci 'male', 'female', 'other' agar mudah diproses.
+    """
+    keyboard = [
+        ["male", "female", "other"],
+        ["cancel"],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+
 
 # Helper: kirim typing indicator
 async def send_typing(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
@@ -193,16 +239,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Selamat datang di **ShadowChat** — tempat kamu bisa ngobrol **anonim** dengan orang baru ✨
 
 🎯 **Perintah utama untuk ngobrol:**
-• `/search` — cari pasangan obrolan
+• `/search` — cari pasangan obrolan acak
+• `/search_gender` — cari berdasarkan gender (khusus premium)
 • `/stop` — hentikan obrolan yang sedang berjalan
-• `/next` atau `/skip` — ganti ke pasangan berikutnya
+• `/next` — ganti ke pasangan berikutnya
 • `/showid` — kirim link profil Telegram-mu ke partner
 • `/report` — laporkan pengguna yang melanggar aturan
 
 💎 **Fitur premium:**
-• Cari berdasarkan gender dengan `/search male` atau `/search female`
-• Cocokkan berdasarkan minat (atur dengan `/setinterest` — khusus premium)
-• Prioritas dalam antrian
+• Cari berdasarkan gender dengan `/search_gender` lalu pilih `male` / `female` / `other`
+• Prioritas dalam antrian pencarian
 • Statistik obrolan yang lebih lengkap (`/stats`)
 • Pengaturan gender dengan `/setgender` (khusus premium)
 
@@ -219,7 +265,7 @@ Selamat datang di **ShadowChat** — tempat kamu bisa ngobrol **anonim** dengan 
 Jangan kirim konten ilegal, SARA, atau hal yang mengganggu pengguna lain.
 Semua obrolan bersifat anonim — jaga sopan santun ya 😊
 
-Siap ngobrol? Ketik `/search` sekarang!
+Siap ngobrol? Ketik `/search` atau `/search_gender` sekarang!
 """
 
     text_en = f"""
@@ -228,16 +274,16 @@ Siap ngobrol? Ketik `/search` sekarang!
 Welcome to **ShadowChat** — an app for **anonymous** chats with new people ✨
 
 🎯 **Main chat commands:**
-• `/search` — find a chat partner
+• `/search` — find a random chat partner
+• `/search_gender` — search by gender (premium only)
 • `/stop` — end the current chat
-• `/next` or `/skip` — switch to the next partner
+• `/next` — switch to the next partner
 • `/showid` — share your Telegram profile with your partner
 • `/report` — report users who break the rules
 
 💎 **Premium features:**
-• Search by gender with `/search male` or `/search female`
-• Match based on interests (set with `/setinterest` — premium only)
-• Priority in the queue
+• Search by gender using `/search_gender` and choose `male` / `female` / `other`
+• Priority in the search queue
 • More detailed stats (`/stats`)
 • Set your gender with `/setgender` (premium only)
 
@@ -254,7 +300,7 @@ Welcome to **ShadowChat** — an app for **anonymous** chats with new people ✨
 Do not send illegal, hateful, or harmful content.
 All chats are anonymous — please be respectful 😊
 
-Ready to chat? Type `/search` now!
+Ready to chat? Type `/search` or `/search_gender` now!
 """
 
     text = text_en if lang == "en" else text_id
@@ -265,7 +311,7 @@ Ready to chat? Type `/search` now!
         else:
             text += "\n\n🛠 Kamu adalah *admin*. Gunakan `/help` untuk melihat semua perintah admin."
 
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=build_idle_keyboard(lang))
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Menampilkan daftar perintah, dibedakan untuk user biasa dan admin."""
@@ -282,13 +328,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "• `/help` — Show this command list.\n"
                 "• `/lang` — Change language (id/en).\n\n"
                 "Chat:\n"
-                "• `/search` — Find a chat partner.\n"
-                "  Optional: `/search male|female|any` — gender filter is *premium only*.\n"
+                "• `/search` — Find a random chat partner.\n"
+                "• `/search_gender` — Search by gender (*premium only*).\n"
                 "• `/stop` — End the current chat.\n"
-                "• `/next` or `/skip` — Skip and look for a new partner.\n\n"
+                "• `/next` — Skip and look for a new partner.\n\n"
                 "Profile & premium:\n"
                 "• `/setgender` — Set your gender (*premium only*).\n"
-                "• `/setinterest` — Set your interests/hobbies (*premium only*).\n"
                 "• `/stats` — View your chat stats and active discount code.\n"
                 "• `/premium` — Premium features and payment info.\n\n"
                 "Safety & support:\n"
@@ -306,13 +351,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "• `/help` — Tampilkan daftar perintah ini.\n"
                 "• `/lang` — Ganti bahasa (id/en).\n\n"
                 "Obrolan:\n"
-                "• `/search` — Cari pasangan obrolan.\n"
-                "  Opsional: `/search male|female|any` — filter gender *khusus premium*.\n"
+                "• `/search` — Cari pasangan obrolan acak.\n"
+                "• `/search_gender` — Cari berdasarkan gender (*khusus premium*).\n"
                 "• `/stop` — Hentikan obrolan saat ini.\n"
-                "• `/next` atau `/skip` — Lewati dan cari partner baru.\n\n"
+                "• `/next` — Lewati dan cari partner baru.\n\n"
                 "Profil & premium:\n"
                 "• `/setgender` — Atur jenis kelamin (*khusus pengguna premium*).\n"
-                "• `/setinterest` — Atur minat/hobi (*khusus pengguna premium*).\n"
                 "• `/stats` — Lihat statistik obrolan dan kode diskon aktif.\n"
                 "• `/premium` — Info fitur premium dan cara pembayaran.\n\n"
                 "Keamanan & bantuan:\n"
@@ -331,8 +375,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🛠 *Admin command list*\n\n"
             "For all users:\n"
             "• `/start`, `/help`, `/lang`\n"
-            "• `/search`, `/stop`, `/next`, `/skip`\n"
-            "• `/setgender`, `/setinterest`, `/stats`, `/premium`\n"
+            "• `/search`, `/search_gender`, `/stop`, `/next`\n"
+            "• `/setgender`, `/stats`, `/premium`\n"
             "• `/showid`, `/report`, `/appeal`, `/paymanual`, `/discount`\n\n"
             "Admin only:\n"
             "• `/ping` — Simple health check (bot & Redis).\n"
@@ -354,8 +398,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🛠 *Daftar perintah admin*\n\n"
             "Untuk semua pengguna:\n"
             "• `/start`, `/help`, `/lang`\n"
-            "• `/search`, `/stop`, `/next`, `/skip`\n"
-            "• `/setgender`, `/setinterest`, `/stats`, `/premium`\n"
+            "• `/search`, `/search_gender`, `/stop`, `/next`\n"
+            "• `/setgender`, `/stats`, `/premium`\n"
             "• `/showid`, `/report`, `/appeal`, `/paymanual`, `/discount`\n\n"
             "Khusus admin:\n"
             "• `/ping` — Cek cepat apakah bot & Redis berjalan.\n"
@@ -394,8 +438,7 @@ async def premium_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 💎 **Fitur Premium ShadowChat**
 
 Dengan premium, kamu bisa:
-• 🔍 Cari berdasarkan jenis kelamin (`/search male` atau `/search female`)
-• 🎯 Dipertemukan berdasarkan minat/hobi yang sama
+• 🔍 Cari berdasarkan jenis kelamin (pakai `/search_gender` lalu pilih `male` / `female` / `other`)
 • ⚡ Prioritas dalam antrian pencarian
 • 📊 Melihat statistik obrolan yang lebih lengkap
 
@@ -421,8 +464,7 @@ Dengan premium, kamu bisa:
 💎 **ShadowChat Premium Features**
 
 With premium, you can:
-• 🔍 Search by gender (`/search male` or `/search female`)
-• 🎯 Be matched with people who share the same interests
+• 🔍 Search by gender (use `/search_gender` and choose `male` / `female` / `other`)
 • ⚡ Get priority in the search queue
 • 📊 See more detailed chat statistics
 
@@ -1076,13 +1118,13 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
             success_text = (
                 f"✅ **Payment successful!**\n\n"
                 f"Your premium is now active for {days_text_en}.\n"
-                f"Use /setgender and /setinterest to set up your premium profile."
+                f"Use /setgender to set up your premium profile."
             )
         else:
             success_text = (
                 f"✅ **Pembayaran berhasil!**\n\n"
                 f"Premium aktif untuk {days_text_id}.\n"
-                f"Gunakan /setgender dan /setinterest untuk mengatur profil premium-mu!"
+                f"Gunakan /setgender untuk mengatur profil premium-mu!"
             )
 
         await update.message.reply_text(success_text, parse_mode="Markdown")
@@ -1204,68 +1246,26 @@ async def set_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 async def set_interest(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mengatur minat/hobi user untuk kebutuhan pencocokan (khusus premium)."""
+    """Fitur minat sudah tidak digunakan lagi."""
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
     update_user_activity(user_id)
 
     if is_banned(user_id):
-        if lang == "en":
-            text = "❌ Your account is blocked."
-        else:
-            text = "❌ Akunmu diblokir."
+        text = "❌ Your account is blocked." if lang == "en" else "❌ Akunmu diblokir."
         await update.message.reply_text(text)
         return
-
-    # Hanya pengguna premium yang boleh mengatur minat
-    if not r.exists(f"user:{user_id}:premium"):
-        if lang == "en":
-            text = "🔒 This command is only available for premium users. Type /premium for more info."
-        else:
-            text = "🔒 Perintah ini khusus untuk pengguna premium. Ketik /premium untuk info lebih lanjut."
-        await update.message.reply_text(text)
-        return
-
-    if not context.args:
-        interests_list = ", ".join(AVAILABLE_INTERESTS)
-        if lang == "en":
-            text = (
-                f"**Available interests:**\n{interests_list}\n\n"
-                f"**How to use:** /setinterest gaming music sports\n"
-                f"(You can choose 1–3 interests)"
-            )
-        else:
-            text = (
-                f"**Minat yang tersedia:**\n{interests_list}\n\n"
-                f"**Cara pakai:** /setinterest gaming music sports\n"
-                f"(Kamu bisa memilih 1–3 minat)"
-            )
-        await update.message.reply_text(text, parse_mode="Markdown")
-        return
-
-    selected = [i.lower() for i in context.args if i.lower() in AVAILABLE_INTERESTS]
-
-    if not selected:
-        text = "❌ Invalid interest." if lang == "en" else "❌ Minat tidak valid."
-        await update.message.reply_text(text)
-        return
-
-    if len(selected) > 3:
-        text = "❌ Maximum 3 interests." if lang == "en" else "❌ Maksimal 3 minat."
-        await update.message.reply_text(text)
-        return
-
-    # Simpan minat user
-    key = f"user:{user_id}:interests"
-    r.delete(key)
-    for interest in selected:
-        r.sadd(key, interest)
 
     if lang == "en":
-        text = f"✅ Interests set to: {', '.join(selected)}"
+        text = (
+            "ℹ️ The interest-based matching feature is no longer used.\n"
+            "You can still use ShadowChat normally with /search or /search_gender (premium)."
+        )
     else:
-        text = f"✅ Minat disetel: {', '.join(selected)}"
-
+        text = (
+            "ℹ️ Fitur pencocokan berdasarkan minat sudah tidak digunakan lagi.\n"
+            "Kamu tetap bisa memakai ShadowChat seperti biasa dengan /search atau /search_gender (premium)."
+        )
     await update.message.reply_text(text)
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1295,14 +1295,30 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text)
         return
 
+    # Jika user masih memakai sintaks lama /search male|female|any,
+    # arahkan ke /search_gender.
+    if context.args:
+        if lang == "en":
+            text = (
+                "ℹ️ Gender filters have changed.\n"
+                "Please use `/search_gender` or the 'Search by gender' button instead."
+            )
+        else:
+            text = (
+                "ℹ️ Filter berdasarkan gender sudah berubah.\n"
+                "Silakan gunakan `/search_gender` atau tombol 'Search by gender' di keyboard."
+            )
+        await update.message.reply_text(text, parse_mode="Markdown")
+        return
+
     # Trust level user (untuk menentukan queue)
     trust_level = get_trust_level(user_id)
 
-    # User dengan trust level tertinggi (normal/high) menggunakan queue biasa,
+    # User dengan trust level tertinggi (normal/high/low) menggunakan queue biasa,
     # sedangkan level "hell" hanya dipertemukan dengan sesama low-trust/hell.
     is_premium = r.exists(f"user:{user_id}:premium")
     user_gender = r.get(f"user:{user_id}:gender") or ""
-    user_interests = r.smembers(f"user:{user_id}:interests")
+    search_pref = (r.get(f"user:{user_id}:search_pref_gender") or "").lower()
 
     # Jika user sudah di level "hell", gunakan queue khusus spammer
     if trust_level == "hell":
@@ -1320,9 +1336,6 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             increment_chat_count(user_id)
             increment_chat_count(partner_id)
 
-            partner_interests = r.smembers(f"user:{partner_id}:interests")
-            common = user_interests.intersection(partner_interests)
-
             if lang == "en":
                 msg_user = "✅ You are connected!"
             else:
@@ -1331,20 +1344,17 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             partner_lang = get_user_language(partner_id)
             msg_partner = "✅ You are connected!" if partner_lang == "en" else "✅ Terhubung!"
 
-            if common:
-                common_str = ", ".join(common)
-                if lang == "en":
-                    msg_user += f"\n🎯 Shared interests: {common_str}"
-                else:
-                    msg_user += f"\n🎯 Minat sama: {common_str}"
-
-                if partner_lang == "en":
-                    msg_partner += f"\n🎯 Shared interests: {common_str}"
-                else:
-                    msg_partner += f"\n🎯 Minat sama: {common_str}"
-
-            await update.message.reply_text(msg_user, parse_mode="Markdown")
-            await context.bot.send_message(partner_id, msg_partner, parse_mode="Markdown")
+            await update.message.reply_text(
+                msg_user,
+                parse_mode="Markdown",
+                reply_markup=build_chat_keyboard(lang),
+            )
+            await context.bot.send_message(
+                partner_id,
+                msg_partner,
+                parse_mode="Markdown",
+                reply_markup=build_chat_keyboard(partner_lang),
+            )
         else:
             # Masukkan user ke queue khusus hell
             r.rpush("queue:hell", user_id)
@@ -1368,36 +1378,21 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # --- Alur normal/premium (trust normal/high/low) ---
 
+    # Default: queue bebas
     target_queue = "queue:free"
 
-    if is_premium and context.args:
-        req = context.args[0].lower()
-        if req in ["male", "female"]:
-            if not user_gender:
-                if lang == "en":
-                    text = "⚠️ Set your gender first using /setgender."
-                else:
-                    text = "⚠️ Atur jenis kelaminmu dulu dengan /setgender."
-                await update.message.reply_text(text)
-                return
-            target_queue = f"queue:premium:{req}"
-        elif req == "any":
-            target_queue = "queue:free"
-        else:
-            text = "Usage: /search [male|female|any]" if lang == "en" else "Cara pakai: /search [male|female|any]"
-            await update.message.reply_text(text)
-            return
-    elif is_premium and user_gender:
-        opposite = "female" if user_gender == "male" else "male"
-        target_queue = f"queue:premium:{opposite}"
-    elif not is_premium:
-        if context.args:
+    if is_premium and search_pref in ["male", "female"]:
+        # Premium dengan preferensi gender eksplisit
+        if not user_gender:
             if lang == "en":
-                text = "🔒 This feature is only for premium users. Type /premium for more info."
+                text = "⚠️ Set your own gender first using /setgender."
             else:
-                text = "🔒 Fitur ini hanya untuk pengguna premium. Ketik /premium untuk info."
+                text = "⚠️ Atur jenis kelaminmu dulu dengan /setgender."
             await update.message.reply_text(text)
             return
+        target_queue = f"queue:premium:{search_pref}"
+    else:
+        # Non-premium atau preferensi = other / kosong -> queue bebas
         target_queue = "queue:free"
 
     # Try to find match di queue normal/premium
@@ -1415,10 +1410,6 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         increment_chat_count(user_id)
         increment_chat_count(partner_id)
 
-        # Check common interests
-        partner_interests = r.smembers(f"user:{partner_id}:interests")
-        common = user_interests.intersection(partner_interests)
-
         if lang == "en":
             msg_user = "✅ You are connected!"
         else:
@@ -1428,21 +1419,19 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         partner_lang = get_user_language(partner_id)
         msg_partner = "✅ You are connected!" if partner_lang == "en" else "✅ Terhubung!"
 
-        if common:
-            common_str = ", ".join(common)
-            if lang == "en":
-                msg_user += f"\n🎯 Shared interests: {common_str}"
-            else:
-                msg_user += f"\n🎯 Minat sama: {common_str}"
-
-            if partner_lang == "en":
-                msg_partner += f"\n🎯 Shared interests: {common_str}"
-            else:
-                msg_partner += f"\n🎯 Minat sama: {common_str}"
-
-        await update.message.reply_text(msg_user, parse_mode="Markdown")
-        await context.bot.send_message(partner_id, msg_partner, parse_mode="Markdown")
+        await update.message.reply_text(
+            msg_user,
+            parse_mode="Markdown",
+            reply_markup=build_chat_keyboard(lang),
+        )
+        await context.bot.send_message(
+            partner_id,
+            msg_partner,
+            parse_mode="Markdown",
+            reply_markup=build_chat_keyboard(partner_lang),
+        )
     else:
+        # Masukkan ke queue sesuai jenis user
         if is_premium and user_gender:
             r.rpush(f"queue:premium:{user_gender}", user_id)
             r.expire(f"queue:premium:{user_gender}", 300)
@@ -1470,12 +1459,17 @@ async def _end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: st
     session_key = r.get(f"user:{user_id}")
     if not session_key:
         text = "ℹ️ You are not currently in a chat." if lang == "en" else "ℹ️ Kamu tidak sedang dalam obrolan."
-        await update.message.reply_text(text)
+        await update.message.reply_text(text, reply_markup=build_idle_keyboard(lang))
         return
 
     partner_id = get_partner(user_id)
     r.delete(session_key)
     r.delete(f"user:{user_id}")
+
+    # Jika user menghentikan obrolan secara penuh, reset preferensi search by gender
+    if mode == "stop":
+        r.delete(f"user:{user_id}:search_pref_gender")
+        r.delete(f"user:{user_id}:pending_search_gender")
 
     partner_lang = None
     if partner_id:
@@ -1494,7 +1488,11 @@ async def _end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: st
                     "Tenang, mungkin yang berikutnya lebih seru 😉\n"
                     "Ketik /search untuk mencari pasangan baru."
                 )
-            await context.bot.send_message(partner_id, partner_text)
+            await context.bot.send_message(
+                partner_id,
+                partner_text,
+                reply_markup=build_idle_keyboard(partner_lang),
+            )
         except Exception:
             partner_lang = None
 
@@ -1526,7 +1524,7 @@ async def _end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: st
                 "Kalau mau lanjut dengan orang baru, ketik saja /search."
             )
 
-    await update.message.reply_text(text_user)
+    await update.message.reply_text(text_user, reply_markup=build_idle_keyboard(lang))
 
     # Helper untuk membangun keyboard rating+report
     def build_feedback_keyboard(lang_code: str, target_partner_id: int) -> tuple[str, InlineKeyboardMarkup]:
@@ -1580,7 +1578,7 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _end_chat(update, context, mode="stop")
 
 
-async def skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _end_chat(update, context, mode="next")
 
 async def showid(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1918,12 +1916,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         gender = stats["gender"]
 
-    # Interests
-    if stats["interests"]:
-        interests = ", ".join(stats["interests"])
-    else:
-        interests = "Not set" if lang == "en" else "Belum diatur"
-
     discount_info = stats.get("discount")
 
     if lang == "en":
@@ -1962,8 +1954,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 👤 **Status:** {premium_status}
 🔢 **Total chats:** {stats['total_chats']}
-⚥ **Gender:** {gender}
-🎯 **Interests:** {interests}{discount_block}
+⚥ **Gender:** {gender}{discount_block}
 
 Type /premium for upgrade info.
 """
@@ -2003,8 +1994,7 @@ Type /premium for upgrade info.
 
 👤 **Status:** {premium_status}
 🔢 **Total obrolan:** {stats['total_chats']}
-⚥ **Jenis kelamin:** {gender}
-🎯 **Minat:** {interests}{discount_block}
+⚥ **Jenis kelamin:** {gender}{discount_block}
 
 Ketik /premium untuk info upgrade.
 """
@@ -2020,9 +2010,9 @@ async def grant_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if len(context.args) != 2:
         text = (
-            "Usage: /grant_premium <user_id> <days>"
+            "Usage: /grant_premium &lt;user_id&gt; &lt;days&gt;"
             if admin_lang == "en"
-            else "Cara pakai: /grant_premium <user_id> <days>"
+            else "Cara pakai: /grant_premium &lt;user_id&gt; &lt;days&gt;"
         )
         await update.message.reply_text(text)
         return
@@ -2043,12 +2033,12 @@ async def grant_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if user_lang == "en":
                 text_user = (
                     f"🎉 Your premium is now active for {days} days!\n"
-                    f"Use /setgender and /setinterest to set up your profile."
+                    f"Use /setgender to set up your profile."
                 )
             else:
                 text_user = (
                     f"🎉 Premium kamu aktif untuk {days} hari!\n"
-                    f"Gunakan /setgender dan /setinterest untuk mengatur profilmu."
+                    f"Gunakan /setgender untuk mengatur profilmu."
                 )
             await context.bot.send_message(user_id, text_user, parse_mode="Markdown")
         except Exception:
@@ -2103,13 +2093,13 @@ async def gift_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text_user = (
                         f"🎁 **CONGRATULATIONS!**\n\n"
                         f"You have received **FREE premium** for {days} days!\n"
-                        f"Use /setgender and /setinterest to set up your profile."
+                        f"Use /setgender to set up your profile."
                     )
                 else:
                     text_user = (
                         f"🎁 **SELAMAT!**\n\n"
                         f"Kamu mendapat premium **GRATIS** untuk {days} hari!\n"
-                        f"Gunakan /setgender dan /setinterest untuk setup."
+                        f"Gunakan /setgender untuk setup."
                     )
                 await context.bot.send_message(user_id, text_user, parse_mode="Markdown")
                 success += 1
@@ -2372,13 +2362,13 @@ async def payreview_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             text_user = (
                 f"🎉 Your manual payment has been *approved* by the admin.\n\n"
                 f"Premium is now active for {days} day(s).\n"
-                f"Use /setgender and /setinterest to set up your profile."
+                f"Use /setgender to set up your profile."
             )
         else:
             text_user = (
                 f"🎉 Pembayaran manual kamu telah *disetujui* admin.\n\n"
                 f"Premium sekarang aktif selama {days} hari.\n"
-                f"Gunakan /setgender dan /setinterest untuk mengatur profilmu."
+                f"Gunakan /setgender untuk mengatur profilmu."
             )
         try:
             await context.bot.send_message(chat_id=target_user_id, text=text_user, parse_mode="Markdown")
@@ -3255,32 +3245,144 @@ async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = "User ID must be a number." if admin_lang == "en" else "ID harus berupa angka."
         await update.message.reply_text(text)
 
-async def appeal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def search_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Memulai alur pencarian berdasarkan gender (khusus premium)."""
     user_id = update.effective_user.id
+    lang = get_user_language(user_id)
+    update_user_activity(user_id)
+
+    if is_banned(user_id):
+        text = "❌ Your account is blocked." if lang == "en" else "❌ Akunmu diblokir."
+        await update.message.reply_text(text)
+        return
+
+    if r.get(f"user:{user_id}"):
+        if lang == "en":
+            text = "ℹ️ You are already in a chat. Type /stop to leave first."
+        else:
+            text = "ℹ️ Kamu sudah dalam obrolan. Ketik /stop untuk keluar."
+        await update.message.reply_text(text)
+        return
+
+    if not r.exists(f"user:{user_id}:premium"):
+        if lang == "en":
+            text = "🔒 Search by gender is only available for premium users. Type /premium for more info."
+        else:
+            text = "🔒 Pencarian berdasarkan gender hanya untuk pengguna premium. Ketik /premium untuk info lebih lanjut."
+        await update.message.reply_text(text)
+        return
+
+    # Set flag bahwa user sedang memilih target gender
+    r.setex(f"user:{user_id}:pending_search_gender", 300, "1")
+
+    if lang == "en":
+        text = (
+            "Please choose the gender you want to search for:\n"
+            "- male\n"
+            "- female\n"
+            "- other (no specific preference)\n\n"
+            "You can also tap 'cancel' to go back."
+        )
+    else:
+        text = (
+            "Pilih gender yang ingin kamu cari:\n"
+            "- male\n"
+            "- female\n"
+            "- other (tanpa preferensi khusus)\n\n"
+            "Kamu juga bisa tap 'cancel' untuk kembali."
+        )
+
+    await update.message.reply_text(text, reply_markup=build_gender_choice_keyboard())al(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang = get_user_language(user_id)
     
     if not is_banned(user_id):
-        await update.message.reply_text("ℹ️ Kamu tidak sedang diblokir.")
+        if lang == "en":
+            text = "ℹ️ Your account is not blocked."
+        else:
+            text = "ℹ️ Kamu tidak sedang diblokir."
+        await update.message.reply_text(text)
         return
     
-    msg = f"📨 **Permohonan Banding**\nUser `{user_id}` meminta pencabutan blokir."
+    if lang == "en":
+        msg_user = "✅ Your appeal has been sent to the admins. Please wait for their review."
+        msg_admin = f"📨 **Appeal Request**\nUser `{user_id}` is requesting to remove the block."
+    else:
+        msg_user = "✅ Permohonan banding sudah dikirim ke admin. Mohon tunggu."
+        msg_admin = f"📨 **Permohonan Banding**\nUser `{user_id}` meminta pencabutan blokir."
     
     for admin_id in ADMIN_IDS:
         try:
-            await context.bot.send_message(admin_id, msg, parse_mode="Markdown")
-        except:
+            await context.bot.send_message(admin_id, msg_admin, parse_mode="Markdown")
+        except Exception:
             pass
     
-    await update.message.reply_text("✅ Permohonan terkirim ke admin. Mohon tunggu.")
+    await update.message.reply_text(msg_user)
 
 # --- MESSAGE HANDLER ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    get_user_language(user_id)  # tetap panggil agar cache bahasa terpakai jika needed
+    lang = get_user_language(user_id)  # cache bahasa jika diperlukan
+    text = (update.message.text or "").strip() if update.message.text else ""
+
+    # Jika user sedang diminta memilih gender target (via /search_gender),
+    # tangani di sini sebelum forward ke partner.
+    if text and not text.startswith("/"):
+        pending_key = f"user:{user_id}:pending_search_gender"
+        if r.exists(pending_key):
+            lower = text.lower()
+            # Mapping beberapa variasi bahasa ke kode canonical
+            if lower in {"male", "cowok", "pria"}:
+                target = "male"
+            elif lower in {"female", "cewek", "wanita"}:
+                target = "female"
+            elif lower in {"other", "lainnya", "other/any"}:
+                target = "other"
+            elif lower in {"cancel", "batal"}:
+                # Batalkan pemilihan gender
+                r.delete(pending_key)
+                if lang == "en":
+                    msg = (
+                        "❌ Gender-based search has been cancelled.\n"
+                        "You can still use /search or /search_gender again later."
+                    )
+                else:
+                    msg = (
+                        "❌ Pencarian berdasarkan gender dibatalkan.\n"
+                        "Kamu tetap bisa memakai /search atau /search_gender lagi nanti."
+                    )
+                await update.message.reply_text(msg, reply_markup=build_idle_keyboard(lang))
+                return
+            else:
+                # Jawaban tidak dikenal, minta pilih lagi
+                if lang == "en":
+                    msg = "Please choose one of: male, female, other, or cancel."
+                else:
+                    msg = "Pilih salah satu: male, female, other, atau cancel."
+                await update.message.reply_text(msg, reply_markup=build_gender_choice_keyboard())
+                return
+
+            # Jika sampai di sini berarti target valid
+            r.delete(pending_key)
+            pref_key = f"user:{user_id}:search_pref_gender"
+            if target == "other":
+                # other = tanpa filter khusus
+                r.delete(pref_key)
+            else:
+                r.set(pref_key, target)
+
+            # Mulai proses pencarian dengan preferensi baru
+            if lang == "en":
+                msg = f"🔍 Searching with gender preference: {target}..."
+            else:
+                msg = f"🔍 Mencari dengan preferensi gender: {target}..."
+            await update.message.reply_text(msg)
+
+            await search(update, context)
+            return
 
     # Jika pesan diawali '/' biarkan CommandHandler yang menanganinya.
-    # Jangan kirim pesan tambahan apa pun di sini, agar perintah seperti /ping, /stop, dll
-    # tidak terkena pesan "perintah hanya berlaku di luar obrolan".
-    if update.message.text and update.message.text.startswith("/"):
+    if text.startswith("/"):
         return
 
     # Check if this is a payment screenshot
@@ -3304,9 +3406,9 @@ def main():
     application.add_handler(CommandHandler("setinterest", set_interest))
     application.add_handler(CommandHandler("lang", set_language_command))
     application.add_handler(CommandHandler("search", search))
+    application.add_handler(CommandHandler("search_gender", search_gender))
     application.add_handler(CommandHandler("stop", stop))
-    application.add_handler(CommandHandler("skip", skip))
-    application.add_handler(CommandHandler("next", skip))
+    application.add_handler(CommandHandler("next", next_chat))
     application.add_handler(CommandHandler("showid", showid))
     application.add_handler(CommandHandler("report", report))
     application.add_handler(CommandHandler("appeal", appeal))
