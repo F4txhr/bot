@@ -745,7 +745,6 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=PAYMENT_LOG_CHAT_ID,
                 text=log_text,
-                parse_mode="Markdown",
             )
         except Exception as exc:
             logger.warning(f"Failed to send payment OCR log to group: {exc}")
@@ -1760,13 +1759,11 @@ async def paymanual(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=admin_id,
                     photo=photo_file_id,
                     caption=caption,
-                    parse_mode="Markdown",
                 )
             else:
                 await context.bot.send_message(
                     chat_id=admin_id,
                     text=caption,
-                    parse_mode="Markdown",
                 )
         except Exception as exc:
             logger.warning(f"Gagal mengirim permintaan paymanual ke admin {admin_id}: {exc}")
