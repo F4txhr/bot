@@ -333,7 +333,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "• `/stop` — End the current chat.\n"
                 "• `/next` — Skip and look for a new partner.\n\n"
                 "Profile & premium:\n"
-                "• `/setgender` — Set your gender (*premium only*).\n"
+                "• `/setgender` — Set your gender.\n"
                 "• `/stats` — View your chat stats and active discount code.\n"
                 "• `/premium` — Premium features and payment info.\n\n"
                 "Safety & support:\n"
@@ -356,7 +356,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "• `/stop` — Hentikan obrolan saat ini.\n"
                 "• `/next` — Lewati dan cari partner baru.\n\n"
                 "Profil & premium:\n"
-                "• `/setgender` — Atur jenis kelamin (*khusus pengguna premium*).\n"
+                "• `/setgender` — Atur jenis kelamin.\n"
                 "• `/stats` — Lihat statistik obrolan dan kode diskon aktif.\n"
                 "• `/premium` — Info fitur premium dan cara pembayaran.\n\n"
                 "Keamanan & bantuan:\n"
@@ -1198,6 +1198,7 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
 async def set_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mengatur gender pengguna (sekarang bisa untuk semua user, tidak hanya premium)."""
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
     update_user_activity(user_id)
@@ -1207,15 +1208,6 @@ async def set_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = "❌ Your account is blocked. Use /appeal to request a review."
         else:
             text = "❌ Akunmu diblokir. Gunakan /appeal untuk mengajukan banding."
-        await update.message.reply_text(text)
-        return
-
-    # Hanya pengguna premium yang boleh mengatur gender
-    if not r.exists(f"user:{user_id}:premium"):
-        if lang == "en":
-            text = "🔒 This command is only available for premium users. Type /premium for more info."
-        else:
-            text = "🔒 Perintah ini khusus untuk pengguna premium. Ketik /premium untuk info lebih lanjut."
         await update.message.reply_text(text)
         return
 
