@@ -1314,11 +1314,19 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Jika user sudah di level "hell", gunakan queue khusus spammer
     if trust_level == "hell":
-        # Coba cari partner di queue hell
-        partner_id = r.lpop("queue:hell")
+        # Coba cari partner di queue hell, pastikan tidak ketemu diri sendiri
+        partner_id = None
+        while True:
+            raw = r.lpop("queue:hell")
+            if not raw:
+                break
+            cand = int(raw)
+            if cand != user_id:
+                partner_id = cand
+                break
+            # jika cand == user_id, abaikan saja (stale entry)
 
         if partner_id:
-            partner_id = int(partner_id)
             session_key = f"session:{user_id}:{partner_id}"
             r.hset(session_key, mapping={"user_a": user_id, "user_b": partner_id})
             r.set(f"user:{user_id}", session_key)
@@ -1328,13 +1336,41 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             increment_chat_count(user_id)
             increment_chat_count(partner_id)
 
+            # Pesan lebih informatif saat partner ditemukan
             if lang == "en":
-                msg_user = "✅ You are connected!"
+                msg_user = (
+                    "✅ Partner found!\n\n"
+                    "Use `/next` to look for a new partner, or `/stop` if you want to end this chat.\n\n"
+                    "Tips:\n"
+                    "- If someone sends inappropriate or disturbing content,\n"
+                    "  reply to their message and use `/report` so the admins can take action."
+                )
             else:
-                msg_user = "✅ Terhubung!"
+                msg_user = (
+                    "✅ Partner ditemukan!\n\n"
+                    "Gunakan `/next` untuk mencari partner baru, atau `/stop` jika kamu ingin mengakhiri obrolan ini.\n\n"
+                    "Tips:\n"
+                    "- Kalau ada yang mengirim konten tidak pantas atau mengganggu,\n"
+                    "  balas (reply) pesannya lalu gunakan `/report` supaya admin bisa menindak."
+                )
 
             partner_lang = get_user_language(partner_id)
-            msg_partner = "✅ You are connected!" if partner_lang == "en" else "✅ Terhubung!"
+            if partner_lang == "en":
+                msg_partner = (
+                    "✅ Partner found!\n\n"
+                    "Use `/next` to look for a new partner, or `/stop` if you want to end this chat.\n\n"
+                    "Tips:\n"
+                    "- If someone sends inappropriate or disturbing content,\n"
+                    "  reply to their message and use `/report` so the admins can take action."
+                )
+            else:
+                msg_partner = (
+                    "✅ Partner ditemukan!\n\n"
+                    "Gunakan `/next` untuk mencari partner baru, atau `/stop` jika kamu ingin mengakhiri obrolan ini.\n\n"
+                    "Tips:\n"
+                    "- Kalau ada yang mengirim konten tidak pantas atau mengganggu,\n"
+                    "  balas (reply) pesannya lalu gunakan `/report` supaya admin bisa menindak."
+                )
 
             await update.message.reply_text(
                 msg_user,
@@ -1387,11 +1423,19 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Non-premium atau preferensi = other / kosong -> queue bebas
         target_queue = "queue:free"
 
-    # Try to find match di queue normal/premium
-    partner_id = r.lpop(target_queue)
+    # Try to find match di queue normal/premium, pastikan tidak ketemu diri sendiri
+    partner_id = None
+    while True:
+        raw = r.lpop(target_queue)
+        if not raw:
+            break
+        cand = int(raw)
+        if cand != user_id:
+            partner_id = cand
+            break
+        # jika cand == user_id, abaikan (stale entry)
 
     if partner_id:
-        partner_id = int(partner_id)
         session_key = f"session:{user_id}:{partner_id}"
         r.hset(session_key, mapping={"user_a": user_id, "user_b": partner_id})
         r.set(f"user:{user_id}", session_key)
@@ -1402,14 +1446,42 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         increment_chat_count(user_id)
         increment_chat_count(partner_id)
 
+        # Pesan lebih informatif saat partner ditemukan
         if lang == "en":
-            msg_user = "✅ You are connected!"
+            msg_user = (
+                "✅ Partner found!\n\n"
+                "Use `/next` to look for a new partner, or `/stop` if you want to end this chat.\n\n"
+                "Tips:\n"
+                "- If someone sends inappropriate or disturbing content,\n"
+                "  reply to their message and use `/report` so the admins can take action."
+            )
         else:
-            msg_user = "✅ Terhubung!"
+            msg_user = (
+                "✅ Partner ditemukan!\n\n"
+                "Gunakan `/next` untuk mencari partner baru, atau `/stop` jika kamu ingin mengakhiri obrolan ini.\n\n"
+                "Tips:\n"
+                "- Kalau ada yang mengirim konten tidak pantas atau mengganggu,\n"
+                "  balas (reply) pesannya lalu gunakan `/report` supaya admin bisa menindak."
+            )
 
         # Partner language bisa berbeda
         partner_lang = get_user_language(partner_id)
-        msg_partner = "✅ You are connected!" if partner_lang == "en" else "✅ Terhubung!"
+        if partner_lang == "en":
+            msg_partner = (
+                "✅ Partner found!\n\n"
+                "Use `/next` to look for a new partner, or `/stop` if you want to end this chat.\n\n"
+                "Tips:\n"
+                "- If someone sends inappropriate or disturbing content,\n"
+                "  reply to their message and use `/report` so the admins can take action."
+            )
+        else:
+            msg_partner = (
+                "✅ Partner ditemukan!\n\n"
+                "Gunakan `/next` untuk mencari partner baru, atau `/stop` jika kamu ingin mengakhiri obrolan ini.\n\n"
+                "Tips:\n"
+                "- Kalau ada yang mengirim konten tidak pantas atau mengganggu,\n"
+                "  balas (reply) pesannya lalu gunakan `/report` supaya admin bisa menindak."
+            )
 
         await update.message.reply_text(
             msg_user,
