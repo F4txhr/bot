@@ -21,7 +21,9 @@ from config import (
     BOT_TOKEN, REDIS_URL, ADMIN_IDS, 
     PREMIUM_PRICES, E_WALLET_NUMBER, E_WALLET_NAME,
     TRAKTEER_URL, AVAILABLE_INTERESTS, SEARCH_COOLDOWN,
-    AUTO_BAN_REPORTS, PAYMENT_LOG_CHAT_ID, REPORT_LOG_CHAT_ID
+    AUTO_BAN_REPORTS,
+    PAYMENT_LOG_CHAT_ID, PAYMENT_LOG_TOPIC_ID,
+    REPORT_LOG_CHAT_ID, REPORT_LOG_TOPIC_ID,
 )
 from utils import (
     censor_text,
@@ -1027,9 +1029,13 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 (ocr_text_str or "")[:800],
             ]
             log_text = "\n".join(log_lines)
+            send_kwargs = {}
+            if PAYMENT_LOG_TOPIC_ID:
+                send_kwargs["message_thread_id"] = PAYMENT_LOG_TOPIC_ID
             await context.bot.send_message(
                 chat_id=PAYMENT_LOG_CHAT_ID,
                 text=log_text,
+                **send_kwargs,
             )
         except Exception as exc:
             logger.warning(f"Failed to send payment OCR log to group: {exc}")
@@ -1834,10 +1840,15 @@ async def report_reason_callback(update: Update, context: ContextTypes.DEFAULT_T
                     "- Pesan ini untuk monitoring; belum ada tombol approve/reject langsung."
                 )
 
+            send_kwargs = {}
+            if REPORT_LOG_TOPIC_ID:
+                send_kwargs["message_thread_id"] = REPORT_LOG_TOPIC_ID
+
             await context.bot.send_message(
                 chat_id=REPORT_LOG_CHAT_ID,
                 text=text_group,
                 parse_mode="Markdown",
+                **send_kwargs,
             )
         except Exception as exc:
             logger.warning(f"Failed to send report log to group: {exc}")
