@@ -1279,13 +1279,27 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Cooldown check
-    if is_search_cooldown(user_id, SEARCH_COOLDOWN):
+    # Jika dipanggil dari /next, kita boleh melewati cooldown satu kali
+    skip_cooldown = False
+    try:
+        skip_cooldown = bool(context.user_data.get("skip_search_cooldown"))
+    except Exception:
+        skip_cooldown = False
+
+    if not skip_cooldown and is_search_cooldown(user_id, SEARCH_COOLDOWN):
         if lang == "en":
             text = f"⏳ Please wait {SEARCH_COOLDOWN} seconds before searching again."
         else:
             text = f"⏳ Tunggu {SEARCH_COOLDOWN} detik sebelum mencari lagi."
         await update.message.reply_text(text)
         return
+
+    # Jika kita melewati cooldown (mis. setelah /next), hapus flag agar pencarian berikutnya normal
+    if skip_cooldown:
+        try:
+            context.user_data.pop("skip_search_cooldown", None)
+        except Exception:
+            pass
 
     # Jika user masih memakai sintaks lama /search male|female|any,
     # arahkan ke /search_gender.
@@ -1665,6 +1679,11 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _end_chat(update, context, mode="next")
     # Setelah melewati partner saat ini, langsung mulai pencarian baru
     # menggunakan preferensi (misalnya gender) yang sudah tersimpan.
+    # Kita juga melewati cooldown /search satu kali agar /next terasa instan.
+    try:
+        context.user_data["skip_search_cooldown"] = True
+    except Exception:
+        pass
     await search(update, context)
 
 async def showid(update: Update, context: ContextTypes.DEFAULT_TYPE):
