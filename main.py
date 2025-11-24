@@ -1724,7 +1724,23 @@ async def paymanual(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wallet = data.get("wallet", "UNKNOWN")
     parsed_amounts = data.get("parsed_amounts", "")
 
-    # Kirim ke semua admin untuk dicek manual
+    # Simpan data ini ke Redis sebagai item yang menunggu keputusan admin
+    review_key = f"payment_review:{user_id}:{code}"
+    review_mapping = {
+        "user_id": user_id,
+        "code": code,
+        "amount": amount,
+        "days": days,
+        "ocr_text": ocr_text,
+        "photo_file_id": photo_file_id or "",
+        "wallet": wallet,
+        "parsed_amounts": parsed_amounts,
+    }
+    r.hset(review_key, mapping=review_mapping)
+    # Simpan maksimal 7 hari
+    r.expire(review_key, 7 * 24 * 3600)
+
+    # Kirim ke semua admin untuk dicek manual, lengkap dengan tombol Terima/Tolak
     for admin_id in ADMIN_IDS:
         try:
             admin_lang = get_user_language(admin_id)
@@ -1748,9 +1764,13 @@ async def paymanual(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "",
                     "OCR text (for reference):",
                     ocr_text[:800],
+                    "",
+                    "Use the buttons below to *ACCEPT* or *REJECT* this payment.",
                 ]
             )
             caption = "\n".join(caption_lines)
+            btn_accept = "✅ Accept"
+            btn_reject = "❌ Reject"
         else:
             caption_lines = [
                 "📩 Permintaan verifikasi manual pembayaran",
@@ -1768,9 +1788,26 @@ async def paymanual(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "",
                     "Teks OCR (referensi):",
                     ocr_text[:800],
+                    "",
+                    "Gunakan tombol di bawah untuk *MENERIMA* atau *MENOLAK* pembayaran ini.",
                 ]
             )
             caption = "\n".join(caption_lines)
+            btn_accept = "✅ Terima"
+            btn_reject = "❌ Tolak"
+
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        btn_accept, callback_data=f"payreview_ok:{user_id}:{code}"
+                    ),
+                    InlineKeyboardButton(
+                        btn_reject, callback_data=f"payreview_ng:{user_id}:{code}"
+                    ),
+                ]
+            ]
+        )
 
         try:
             if photo_file_id:
@@ -1778,16 +1815,18 @@ async def paymanual(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=admin_id,
                     photo=photo_file_id,
                     caption=caption,
+                    reply_markup=keyboard,
                 )
             else:
                 await context.bot.send_message(
                     chat_id=admin_id,
                     text=caption,
+                    reply_markup=keyboard,
                 )
         except Exception as exc:
             logger.warning(f"Gagal mengirim permintaan paymanual ke admin {admin_id}: {exc}")
 
-    # Hapus data gagal agar tidak dikirim berkali-kali
+    # Hapus data gagal agar tidak dikirim berkali-kali dari sisi user
     r.delete(failed_key)
 
     if lang == "en":
@@ -1801,6 +1840,144 @@ async def paymanual(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Mohon tunggu, admin akan mengecek pembayaranmu."
         )
     await update.message.reply_text(text_user)
+
+
+async def payreview_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback ketika admin menekan tombol Terima/Tolak pada permintaan paymanual."""
+    query = update.callback_query
+    await query.answer()
+
+    admin_id = query.from_user.id
+    if admin_id not in ADMIN_IDS:
+        return
+
+    data = query.data or ""
+    parts = data.split(":", 2)
+    if len(parts) != 3:
+        return
+
+    action = parts[0]  # payreview_ok / payreview_ng
+    try:
+        target_user_id = int(parts[1])
+    except ValueError:
+        return
+    code = parts[2]
+
+    review_key = f"payment_review:{target_user_id}:{code}"
+    info = r.hgetall(review_key)
+    if not info:
+        # Sudah diproses atau data kadaluarsa
+        admin_lang = get_user_language(admin_id)
+        if admin_lang == "en":
+            msg = "ℹ️ This payment has already been processed or the data is no longer available."
+        else:
+            msg = "ℹ️ Pembayaran ini sudah diproses atau datanya sudah tidak tersedia."
+        await context.bot.send_message(chat_id=admin_id, text=msg)
+        return
+
+    amount = int(info.get("amount", 0)) if info.get("amount") else 0
+    days = int(info.get("days", 0)) if info.get("days") else 0
+    wallet = info.get("wallet", "UNKNOWN")
+
+    # Bersihkan key review agar tidak diproses dua kali
+    r.delete(review_key)
+
+    # Bahasa admin & user
+    try:
+        admin_lang = get_user_language(admin_id)
+    except Exception:
+        admin_lang = "id"
+
+    try:
+        user_lang = get_user_language(target_user_id)
+    except Exception:
+        user_lang = "id"
+
+    if action == "payreview_ok":
+        # Terima pembayaran: aktifkan premium dan hapus payment code
+        try:
+            r.setex(f"user:{target_user_id}:premium", days * 86400, "1")
+            if code:
+                delete_payment_code(code)
+        except Exception as exc:
+            logger.warning(f"Failed to grant premium in payreview for user {target_user_id}: {exc}")
+
+        # Beri tahu user
+        if user_lang == "en":
+            text_user = (
+                f"🎉 Your manual payment has been *approved* by the admin.\n\n"
+                f"Premium is now active for {days} day(s).\n"
+                f"Use /setgender and /setinterest to set up your profile."
+            )
+        else:
+            text_user = (
+                f"🎉 Pembayaran manual kamu telah *disetujui* admin.\n\n"
+                f"Premium sekarang aktif selama {days} hari.\n"
+                f"Gunakan /setgender dan /setinterest untuk mengatur profilmu."
+            )
+        try:
+            await context.bot.send_message(chat_id=target_user_id, text=text_user, parse_mode="Markdown")
+        except Exception as exc:
+            logger.warning(f"Failed to notify user {target_user_id} about approved payment: {exc}")
+
+        # Beri tahu admin
+        if admin_lang == "en":
+            text_admin = (
+                f"✅ Payment accepted.\n\n"
+                f"User ID: `{target_user_id}`\n"
+                f"Code: `{code}`\n"
+                f"Wallet: {wallet}\n"
+                f"Amount: Rp {amount:,}\n"
+                f"Days: {days}"
+            )
+        else:
+            text_admin = (
+                f"✅ Pembayaran *disetujui*.\n\n"
+                f"User ID: `{target_user_id}`\n"
+                f"Kode: `{code}`\n"
+                f"E-wallet: {wallet}\n"
+                f"Jumlah: Rp {amount:,}\n"
+                f"Durasi: {days} hari"
+            )
+    else:
+        # Tolak pembayaran: tidak mengubah premium, hanya info ke user
+        if user_lang == "en":
+            text_user = (
+                "❌ Your manual payment could not be verified and was *rejected* by the admin.\n\n"
+                "If you believe this is a mistake, please contact the admin or send a clearer screenshot."
+            )
+        else:
+            text_user = (
+                "❌ Pembayaran manual kamu *tidak dapat diverifikasi* dan telah *ditolak* admin.\n\n"
+                "Jika kamu merasa ini keliru, silakan hubungi admin atau kirim ulang bukti pembayaran yang lebih jelas."
+            )
+        try:
+            await context.bot.send_message(chat_id=target_user_id, text=text_user, parse_mode="Markdown")
+        except Exception as exc:
+            logger.warning(f"Failed to notify user {target_user_id} about rejected payment: {exc}")
+
+        if admin_lang == "en":
+            text_admin = (
+                f"❌ Payment *rejected*.\n\n"
+                f"User ID: `{target_user_id}`\n"
+                f"Code: `{code}`\n"
+                f"Wallet: {wallet}\n"
+                f"Amount: Rp {amount:,}\n"
+                f"Days: {days}"
+            )
+        else:
+            text_admin = (
+                f"❌ Pembayaran *ditolak*.\n\n"
+                f"User ID: `{target_user_id}`\n"
+                f"Kode: `{code}`\n"
+                f"E-wallet: {wallet}\n"
+                f"Jumlah: Rp {amount:,}\n"
+                f"Durasi: {days} hari"
+            )
+
+    # Kirim konfirmasi ke admin (separate message agar tidak perlu edit caption/text)
+    await context.bot.send_message(chat_id=admin_id, text=text_admin, parse_mode="Markdown")
+
 
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2028,6 +2205,7 @@ def main():
     application.add_handler(CallbackQueryHandler(rating_callback, pattern="^rate_"))
     application.add_handler(CallbackQueryHandler(report_menu_callback, pattern="^report_menu"))
     application.add_handler(CallbackQueryHandler(report_reason_callback, pattern="^rep_"))
+    application.add_handler(CallbackQueryHandler(payreview_callback, pattern="^payreview_"))
     
     # Message handler
     application.add_handler(MessageHandler(
