@@ -443,6 +443,9 @@ Follow these steps to activate premium automatically:
 4. Complete the payment.
 
 After Trakteer sends the notification, the bot will automatically extend your premium based on the amount.
+
+ℹ️ *Note about discounts:*
+Discount codes (via `/discount`) are only applied to **manual transfer** payments. Trakteer donations do **not** use discount codes.
 """
         button_label = "🔗 Open Trakteer page"
     else:
@@ -462,6 +465,9 @@ Ikuti langkah ini supaya premium aktif otomatis:
 4. Selesaikan pembayaran.
 
 Setelah Trakteer mengirim notifikasi ke server, bot akan otomatis menambah durasi premium sesuai nominal.
+
+ℹ️ *Catatan tentang diskon:*
+Kode diskon (via `/discount`) hanya berlaku untuk pembayaran **transfer manual**. Donasi lewat Trakteer **tidak** memakai kode diskon.
 """
         button_label = "🔗 Buka halaman Trakteer"
 
@@ -2328,7 +2334,11 @@ async def create_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def apply_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Dipakai user untuk memasang kode diskon ke akunnya: /discount KODE."""
+    """Command /discount.
+
+    - Tanpa argumen: tampilkan semua kode diskon yang masih tersedia.
+    - Dengan argumen: pasang kode diskon ke akun user.
+    """
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
     update_user_activity(user_id)
@@ -2338,21 +2348,102 @@ async def apply_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text)
         return
 
+    # MODE 1: /discount -> list semua diskon yang tersedia
     if not context.args:
+        # Cari semua kode diskon aktif di Redis
+        cursor = 0
+        infos: list[dict] = []
+        while True:
+            cursor, keys = r.scan(cursor=cursor, match="discount:*", count=50)
+            for key in keys:
+                parts = key.split(":")
+                if len(parts) != 2:
+                    continue
+                raw_code = parts[1]
+                info = get_discount_info(raw_code)
+                if info:
+                    infos.append(info)
+            if cursor == 0:
+                break
+
+        if not infos:
+            if lang == "en":
+                text = (
+                    "ℹ️ There are currently no active discount codes.\n"
+                    "If the admin creates a new one, you'll get a notification."
+                )
+            else:
+                text = (
+                    "ℹ️ Saat ini tidak ada kode diskon yang aktif.\n"
+                    "Jika admin membuat kode baru, kamu akan mendapat notifikasi."
+                )
+            await update.message.reply_text(text)
+            return
+
+        # Lihat apakah user sudah punya kode aktif
+        current_code = get_user_discount(user_id)
+
+        lines: list[str] = []
+        for info in infos:
+            code = info["code"]
+            percent = info["percent"]
+            min_amount = info.get("min_amount", 0)
+            max_uses = info.get("max_uses", 0)
+            remaining = info.get("remaining_uses", -1)
+            expire_at = info.get("expire_at", 0)
+
+            if expire_at > 0:
+                dt = datetime.fromtimestamp(expire_at)
+                expire_str = dt.strftime("%Y-%m-%d %H:%M")
+            else:
+                expire_str = "no time limit" if lang == "en" else "tanpa batas waktu"
+
+            if remaining < 0 or max_uses <= 0:
+                remain_str_en = "unlimited vouchers"
+                remain_str_id = "voucher tak terbatas"
+            else:
+                remain_str_en = f"{remaining} vouchers left (of {max_uses})"
+                remain_str_id = f"sisa {remaining} voucher (dari {max_uses})"
+
+            is_active = current_code and current_code.upper() == code.upper()
+            active_tag_en = " [ACTIVE]" if is_active and lang == "en" else ""
+            active_tag_id = " [AKTIF]" if is_active and lang != "en" else ""
+
+            if lang == "en":
+                line = (
+                    f"- `{code}` — {percent}% off, "
+                    f"min package Rp {min_amount:,}, {remain_str_en}, valid until {expire_str}{active_tag_en}"
+                )
+            else:
+                line = (
+                    f"- `{code}` — diskon {percent}%, "
+                    f"minimal paket Rp {min_amount:,}, {remain_str_id}, berlaku sampai {expire_str}{active_tag_id}"
+                )
+            lines.append(line)
+
         if lang == "en":
-            text = "Usage: /discount <code>"
+            header = (
+                "📋 *Available discount codes:*\n\n"
+                "Use `/discount <code>` to apply one of them to your account.\n\n"
+            )
         else:
-            text = "Cara pakai: /discount <kode>"
-        await update.message.reply_text(text)
+            header = (
+                "📋 *Kode diskon yang tersedia:*\n\n"
+                "Gunakan `/discount <kode>` untuk memasang salah satu ke akunmu.\n\n"
+            )
+
+        text = header + "\n".join(lines)
+        await update.message.reply_text(text, parse_mode="Markdown")
         return
 
+    # MODE 2: /discount <code> -> klaim / pasang kode
     raw_code = context.args[0]
     info = assign_discount_to_user(user_id, raw_code)
     if not info:
         if lang == "en":
-            text = "❌ Invalid or expired discount code."
+            text = "❌ Invalid, expired, or fully used discount code."
         else:
-            text = "❌ Kode diskon tidak valid atau sudah kadaluarsa."
+            text = "❌ Kode diskon tidak valid, sudah kadaluarsa, atau kuotanya habis."
         await update.message.reply_text(text)
         return
 
@@ -2360,26 +2451,37 @@ async def apply_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     percent = info["percent"]
     expire_at = info["expire_at"]
     min_amount = info.get("min_amount", 0)
+    max_uses = info.get("max_uses", 0)
+    remaining = info.get("remaining_uses", -1)
 
     if expire_at > 0:
         dt = datetime.fromtimestamp(expire_at)
         expire_str = dt.strftime("%Y-%m-%d %H:%M")
     else:
-        expire_str = "tidak terbatas" if lang != "en" else "unlimited"
+        expire_str = "unlimited" if lang == "en" else "tidak terbatas"
+
+    if remaining < 0 or max_uses <= 0:
+        voucher_str_en = "unlimited vouchers"
+        voucher_str_id = "voucher tak terbatas"
+    else:
+        voucher_str_en = f"{remaining} vouchers left (of {max_uses})"
+        voucher_str_id = f"sisa {remaining} voucher (dari {max_uses})"
 
     if lang == "en":
         text = (
             f"✅ Discount code applied: `{code}` ({percent}%).\n"
             f"You can now use manual payment with a lower price.\n"
             f"Valid until: {expire_str}.\n"
-            f"Minimum package price to use this discount: Rp {min_amount:,}."
+            f"Minimum package price to use this discount: Rp {min_amount:,}.\n"
+            f"Remaining quota: {voucher_str_en}."
         )
     else:
         text = (
             f"✅ Kode diskon berhasil dipasang: `{code}` ({percent}%).\n"
             f"Sekarang kamu bisa bayar manual dengan harga lebih murah.\n"
             f"Berlaku sampai: {expire_str}.\n"
-            f"Minimal harga paket untuk memakai diskon ini: Rp {min_amount:,}."
+            f"Minimal harga paket untuk memakai diskon ini: Rp {min_amount:,}.\n"
+            f"Sisa kuota: {voucher_str_id}."
         )
     await update.message.reply_text(text, parse_mode="Markdown")
 
