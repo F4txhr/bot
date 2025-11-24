@@ -9,6 +9,10 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 # Daftar admin (ganti dengan ID Telegram-mu)
 ADMIN_IDS = {int(x) for x in os.getenv("ADMIN_IDS", "5361605327").split(",")}  # ← GANTI DENGAN ID TELEGRAM KAMU!
 
+# Chat ID grup/log untuk laporan hasil OCR pembayaran (opsional).
+# Jika tidak ingin mengirim ke grup, biarkan 0 atau kosong.
+PAYMENT_LOG_CHAT_ID = int(os.getenv("PAYMENT_LOG_CHAT_ID", "0") or "0")
+
 # payment
 
 TRAKTEER_API_KEY = os.getenv("TRAKTEER_API_KEY")

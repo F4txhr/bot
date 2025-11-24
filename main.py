@@ -21,7 +21,7 @@ from config import (
     BOT_TOKEN, REDIS_URL, ADMIN_IDS, 
     PREMIUM_PRICES, E_WALLET_NUMBER, E_WALLET_NAME,
     TRAKTEER_URL, AVAILABLE_INTERESTS, SEARCH_COOLDOWN,
-    AUTO_BAN_REPORTS
+    AUTO_BAN_REPORTS, PAYMENT_LOG_CHAT_ID
 )
 from utils import (
     censor_text,
@@ -715,6 +715,41 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if date_time_valid is False:
         verification_ok = False
 
+    # Siapkan ringkasan hasil OCR untuk dikirim ke grup log (jika diset)
+    parsed_amounts_str = ",".join(str(x) for x in sorted(amount_candidates)) if amount_candidates else ""
+    tx_info = "unknown"
+    if transaction_ts is not None:
+        tx_dt = datetime.fromtimestamp(transaction_ts)
+        tx_info = tx_dt.strftime("%Y-%m-%d %H:%M")
+
+    if PAYMENT_LOG_CHAT_ID:
+        try:
+            log_lines = [
+                "🧾 *Log verifikasi pembayaran manual*",
+                f"User ID: `{user_id}`",
+                f"E-wallet: {wallet}",
+                f"Kode: `{code}`",
+                f"Amount expected: Rp {amount:,}",
+                f"Days: {days}",
+                f"Nominal parsed: {parsed_amounts_str or '-'}",
+                f"Tanggal/waktu OCR: {tx_info}",
+                f"Kode ditemukan: {code_found}",
+                f"Amount cocok: {amount_found}",
+                f"Date/time valid: {date_time_valid}",
+                f"Hasil akhir: {'OK' if verification_ok else 'FAILED'}",
+                "",
+                "Cuplikan OCR:",
+                (ocr_text_str or "")[:800],
+            ]
+            log_text = "\n".join(log_lines)
+            await context.bot.send_message(
+                chat_id=PAYMENT_LOG_CHAT_ID,
+                text=log_text,
+                parse_mode="Markdown",
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to send payment OCR log to group: {exc}")
+
     if verification_ok:
         # Verifikasi berhasil -> aktifkan premium
         r.setex(f"user:{user_id}:premium", days * 86400, "1")
@@ -753,7 +788,7 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "ocr_text": ocr_text or "",
             "photo_file_id": update.message.photo[-1].file_id,
             "timestamp": int(time.time()),
-            "parsed_amounts": ",".join(str(x) for x in sorted(amount_candidates)) if amount_candidates else "",
+            "parsed_amounts": parsed_amounts_str,
             "wallet": wallet,
         },
     )
