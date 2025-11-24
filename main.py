@@ -3225,22 +3225,12 @@ async def appeal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- MESSAGE HANDLER ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    lang = get_user_language(user_id)
+    get_user_language(user_id)  # tetap panggil agar cache bahasa terpakai jika needed
 
+    # Jika pesan diawali '/' biarkan CommandHandler yang menanganinya.
+    # Jangan kirim pesan tambahan apa pun di sini, agar perintah seperti /ping, /stop, dll
+    # tidak terkena pesan "perintah hanya berlaku di luar obrolan".
     if update.message.text and update.message.text.startswith("/"):
-        if lang == "en":
-            text = (
-                "ℹ️ Commands only work outside of an active chat.\n"
-                "While in a chat, just send normal messages.\n"
-                "To leave, use /stop or /next."
-            )
-        else:
-            text = (
-                "ℹ️ Perintah hanya berlaku di luar obrolan.\n"
-                "Saat dalam obrolan, kirim pesan biasa.\n"
-                "Untuk keluar, gunakan /stop atau /next."
-            )
-        await update.message.reply_text(text)
         return
 
     # Check if this is a payment screenshot
