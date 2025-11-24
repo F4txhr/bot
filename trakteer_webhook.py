@@ -7,7 +7,7 @@ from typing import Any, Dict
 from flask import Flask, request, jsonify
 
 from config import BOT_TOKEN, TRAKTEER_WEBHOOK_SECRET
-from utils import r, get_user_language
+from utils import r, get_user_language, log_payment
 from telegram import Bot
 
 app = Flask(__name__)
@@ -144,6 +144,26 @@ def trakteer_webhook() -> Any:
         new_ttl = extra_seconds
 
     r.setex(key, new_ttl, "1")
+
+    # Catat riwayat pembayaran Trakteer
+    try:
+        meta = {
+            "transaction_id": data.get("transaction_id", ""),
+            "supporter_name": data.get("supporter_name", ""),
+        }
+        log_payment(
+            user_id=user_id,
+            source="trakteer",
+            amount=amount,
+            days=days,
+            wallet="TRAKTEER",
+            code="",
+            status="ok",
+            admin_id=None,
+            meta=meta,
+        )
+    except Exception:
+        pass
 
     # Beri tahu user di Telegram (jika memungkinkan)
     if bot is not None and loop is not None:

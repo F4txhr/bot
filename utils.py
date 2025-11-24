@@ -4,6 +4,7 @@ import time
 import random
 import string
 import math
+import json
 from typing import Optional, List
 import redis
 from config import (
@@ -109,23 +110,31 @@ def generate_payment_code() -> str:
     """Menghasilkan kode pembayaran unik."""
     return "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
 
-def create_payment_code(user_id: int, days: int, amount: int) -> str:
-    """Membuat dan menyimpan kode pembayaran untuk user."""
+
+def create_payment_code(
+    user_id: int, days: int, amount: int, discount_code: str | None = None
+) -> str:
+    """Membuat dan menyimpan kode pembayaran untuk user.
+
+    discount_code bersifat opsional, digunakan jika user memakai kode diskon.
+    """
     code = f"PAY-{generate_payment_code()}"
     key = f"payment:{code}"
 
-    r.hset(
-        key,
-        mapping={
-            "user_id": user_id,
-            "days": days,
-            "amount": amount,
-            "created_at": int(time.time()),
-        },
-    )
+    mapping: dict[str, object] = {
+        "user_id": user_id,
+        "days": days,
+        "amount": amount,
+        "created_at": int(time.time()),
+    }
+    if discount_code:
+        mapping["discount_code"] = discount_code
+
+    r.hset(key, mapping=mapping)
     r.expire(key, 3600)  # Berlaku selama 1 jam
 
     return code
+
 
 def verify_payment_code(code: str) -> Optional[dict]:
     """Memeriksa dan mengambil data kode pembayaran jika masih berlaku."""
@@ -135,13 +144,19 @@ def verify_payment_code(code: str) -> Optional[dict]:
 
     data = r.hgetall(key)
     if data:
-        return {
+        result = {
             "user_id": int(data["user_id"]),
             "days": int(data["days"]),
             "amount": int(data["amount"]),
             "created_at": int(data["created_at"]),
         }
+        if "discount_code" in data and data["discount_code"]:
+            result["discount_code"] = data["discount_code"]
+        else:
+            result["discount_code"] = ""
+        return result
     return None
+
 
 def delete_payment_code(code: str) -> None:
     """Menghapus kode pembayaran setelah diverifikasi."""
@@ -308,3 +323,218 @@ def get_global_stats() -> dict:
         "total_premium": total_premium,
         "total_banned": total_banned,
     }
+
+
+# === SISTEM DISKON & LOG PEMBAYARAN ===
+
+def _normalize_discount_code(code: str) -> str:
+    """Normalisasi kode diskon: kapital dan hanya A-Z/0-9."""
+    if not code:
+        return ""
+    return re.sub(r"[^A-Z0-9]", "", code.upper())
+
+
+def create_discount_code(
+    raw_code: str,
+    percent: int,
+    max_uses: int,
+    valid_hours: int,
+    created_by: int,
+) -> dict:
+    """Membuat kode diskon dan menyimpannya di Redis.
+
+    - percent: 1–100 (dipotong jika di luar range)
+    - max_uses: jumlah pemakaian (<=0 berarti tanpa batas)
+    - valid_hours: masa berlaku dalam jam (<=0 berarti tanpa batas)
+    """
+    code = _normalize_discount_code(raw_code)
+    if not code:
+        raise ValueError("Invalid discount code")
+
+    if percent < 1:
+        percent = 1
+    if percent > 100:
+        percent = 100
+
+    now = int(time.time())
+    expire_at = now + valid_hours * 3600 if valid_hours > 0 else 0
+
+    key = f"discount:{code}"
+    mapping = {
+        "code": code,
+        "percent": percent,
+        "max_uses": max_uses,
+        "used": 0,
+        "created_by": created_by,
+        "created_at": now,
+        "expire_at": expire_at,
+    }
+    r.hset(key, mapping=mapping)
+    if valid_hours > 0:
+        # Biarkan Redis menghapus otomatis setelah kadaluarsa
+        r.expire(key, valid_hours * 3600)
+
+    return mapping
+
+
+def get_discount_info(raw_code: str) -> Optional[dict]:
+    """Mengambil info kode diskon jika masih berlaku."""
+    code = _normalize_discount_code(raw_code)
+    if not code:
+        return None
+
+    key = f"discount:{code}"
+    if not r.exists(key):
+        return None
+
+    data = r.hgetall(key)
+    if not data:
+        return None
+
+    now = int(time.time())
+    try:
+        percent = int(data.get("percent", 0))
+        max_uses = int(data.get("max_uses", 0))
+        used = int(data.get("used", 0))
+        expire_at = int(data.get("expire_at", 0))
+        created_at = int(data.get("created_at", now))
+        created_by = int(data.get("created_by", 0)) if data.get("created_by") else 0
+    except (TypeError, ValueError):
+        return None
+
+    # Cek kadaluarsa waktu
+    if expire_at > 0 and now > expire_at:
+        return None
+
+    # Cek jumlah pemakaian
+    if max_uses > 0 and used >= max_uses:
+        return None
+
+    remaining_uses = max_uses - used if max_uses > 0 else -1
+
+    return {
+        "code": code,
+        "percent": percent,
+        "max_uses": max_uses,
+        "used": used,
+        "remaining_uses": remaining_uses,
+        "expire_at": expire_at,
+        "created_at": created_at,
+        "created_by": created_by,
+    }
+
+
+def assign_discount_to_user(user_id: int, raw_code: str) -> Optional[dict]:
+    """Mengaitkan kode diskon yang masih berlaku ke user.
+
+    Mengembalikan info diskon jika berhasil, atau None jika invalid.
+    """
+    info = get_discount_info(raw_code)
+    if not info:
+        return None
+
+    key = f"user_discount:{user_id}"
+    now = int(time.time())
+    ttl = None
+    if info["expire_at"] > 0:
+        ttl = max(info["expire_at"] - now, 0)
+
+    if ttl and ttl > 0:
+        r.setex(key, ttl, info["code"])
+    else:
+        r.set(key, info["code"])
+    return info
+
+
+def get_user_discount(user_id: int) -> Optional[str]:
+    """Mengambil kode diskon yang sedang aktif untuk user (jika ada)."""
+    code = r.get(f"user_discount:{user_id}")
+    return code or None
+
+
+def clear_user_discount(user_id: int) -> None:
+    """Menghapus kode diskon yang terpasang pada user."""
+    r.delete(f"user_discount:{user_id}")
+
+
+def mark_discount_used(raw_code: str) -> None:
+    """Menandai bahwa suatu kode diskon telah digunakan sekali."""
+    code = _normalize_discount_code(raw_code)
+    if not code:
+        return
+    key = f"discount:{code}"
+    if not r.exists(key):
+        return
+
+    data = r.hgetall(key)
+    if not data:
+        return
+
+    try:
+        max_uses = int(data.get("max_uses", 0))
+    except (TypeError, ValueError):
+        max_uses = 0
+
+    # Jika max_uses <= 0 -> unlimited, tidak perlu dihitung.
+    if max_uses <= 0:
+        return
+
+    try:
+        r.hincrby(key, "used", 1)
+    except Exception:
+        # Jika ada masalah, biarkan saja, ini bukan operasi kritis.
+        return
+
+
+def log_payment(
+    user_id: int,
+    source: str,
+    amount: int,
+    days: int,
+    wallet: str = "",
+    code: str = "",
+    status: str = "ok",
+    admin_id: Optional[int] = None,
+    meta: Optional[dict] = None,
+) -> None:
+    """Mencatat riwayat pembayaran user ke Redis.
+
+    - source: 'trakteer', 'manual_auto', 'manual_admin', dsb.
+    - status: 'ok', 'failed', 'rejected', dll.
+    """
+    entry = {
+        "ts": int(time.time()),
+        "source": source,
+        "amount": int(amount),
+        "days": int(days),
+        "wallet": wallet or "",
+        "code": code or "",
+        "status": status or "ok",
+    }
+    if admin_id is not None:
+        entry["admin_id"] = int(admin_id)
+    if meta:
+        entry["meta"] = meta
+
+    key = f"payments:{user_id}"
+    try:
+        r.lpush(key, json.dumps(entry))
+        # Simpan maksimal 50 riwayat terbaru
+        r.ltrim(key, 0, 49)
+    except Exception:
+        return
+
+
+def get_payment_history(user_id: int, limit: int = 10) -> list[dict]:
+    """Mengambil riwayat pembayaran user (maksimal 'limit' entri terbaru)."""
+    key = f"payments:{user_id}"
+    raw_items = r.lrange(key, 0, max(limit - 1, 0))
+    history: list[dict] = []
+    for raw in raw_items:
+        try:
+            item = json.loads(raw)
+            if isinstance(item, dict):
+                history.append(item)
+        except Exception:
+            continue
+    return history

@@ -46,6 +46,13 @@ from utils import (
     get_trust_score,
     get_trust_level,
     add_rating,
+    get_user_discount,
+    assign_discount_to_user,
+    get_discount_info,
+    clear_user_discount,
+    mark_discount_used,
+    log_payment,
+    get_payment_history,
     generate_payment_code,
     r,
 )
@@ -411,6 +418,8 @@ async def payment_manual_callback(update: Update, context: ContextTypes.DEFAULT_
 
 Please choose the premium package/duration you want to purchase:
 
+If you have a *discount code*, set it first using `/discount <code>`.
+
 Note:
 • Automatic verification is currently most stable for **DANA**.
 • GoPay & OVO support is still under development — if it fails, don't worry. You can always use /paymanual and the admin will review your payment manually.
@@ -420,6 +429,8 @@ Note:
 📱 **Transfer manual**
 
 Silakan pilih paket/durasi premium yang ingin kamu beli:
+
+Jika kamu punya *kode diskon*, set dulu dengan `/discount <kode>`.
 
 Catatan:
 • Verifikasi otomatis saat ini paling stabil untuk **DANA**.
@@ -452,66 +463,107 @@ async def payment_duration_callback(update: Update, context: ContextTypes.DEFAUL
     lang = get_user_language(user_id)
 
     days = int(query.data.split("_")[1])
-    amount = PREMIUM_PRICES[days]
+    base_amount = PREMIUM_PRICES[days]
 
-    # Generate payment code
-    code = create_payment_code(user_id, days, amount)
+    # Cek apakah user punya kode diskon aktif
+    discount_code = get_user_discount(user_id)
+    discount_info = get_discount_info(discount_code) if discount_code else None
+
+    final_amount = base_amount
+    discount_percent = 0
+    if discount_info:
+        discount_percent = discount_info["percent"]
+        discount_value = base_amount * discount_percent // 100
+        final_amount = max(base_amount - discount_value, 1000)
+
+    # Generate payment code (sertakan kode diskon jika ada)
+    code = create_payment_code(user_id, days, final_amount, discount_code=discount_info["code"] if discount_info else None)
 
     days_text_id = f"{days} hari" if days < 365 else "1 tahun"
     days_text_en = f"{days} days" if days < 365 else "1 year"
 
     if lang == "en":
         days_text = days_text_en
-        text = f"""
-💳 **Payment instructions**
+        parts = [
+            "💳 **Payment instructions**",
+            "",
+            f"📦 Package: **{days_text}**",
+        ]
+        if discount_info:
+            parts.extend(
+                [
+                    f"💰 Base price: ~~Rp {base_amount:,}~~",
+                    f"🎁 Discount: {discount_percent}% (`{discount_info['code']}`)",
+                    f"💰 **Final price to pay: Rp {final_amount:,}**",
+                ]
+            )
+        else:
+            parts.append(f"💰 Price: **Rp {final_amount:,}**")
 
-📦 Package: **{days_text}**
-💰 Price: **Rp {amount:,}**
-
-🔢 **PAYMENT CODE:**
-`{code}`
-
-📤 **How to pay:**
-1. Transfer to one of these:
-   • **GoPay:** {E_WALLET_NUMBER}
-   • **OVO:** {E_WALLET_NUMBER}
-   • **DANA:** {E_WALLET_NUMBER}
-   
-2. **IMPORTANT:** Put this code in the transfer note: `{code}`
-
-3. Take a screenshot of your payment
-
-4. Send the screenshot to this chat
-
-⏰ The code is valid for 1 hour.
-🤖 The bot will auto-verify after you send the screenshot.
-"""
+        parts.extend(
+            [
+                "",
+                "🔢 **PAYMENT CODE:**",
+                f"`{code}`",
+                "",
+                "📤 **How to pay:**",
+                "1. Transfer to one of these:",
+                f"   • **GoPay:** {E_WALLET_NUMBER}",
+                f"   • **OVO:** {E_WALLET_NUMBER}",
+                f"   • **DANA:** {E_WALLET_NUMBER}",
+                "",
+                f"2. **IMPORTANT:** Put this code in the transfer note: `{code}`",
+                "",
+                "3. Take a screenshot of your payment",
+                "",
+                "4. Send the screenshot to this chat",
+                "",
+                "⏰ The code is valid for 1 hour.",
+                "🤖 The bot will auto-verify after you send the screenshot.",
+            ]
+        )
+        text = "\n".join(parts)
     else:
         days_text = days_text_id
-        text = f"""
-💳 **Instruksi pembayaran**
+        parts = [
+            "💳 **Instruksi pembayaran**",
+            "",
+            f"📦 Paket: **{days_text}**",
+        ]
+        if discount_info:
+            parts.extend(
+                [
+                    f"💰 Harga awal: ~~Rp {base_amount:,}~~",
+                    f"🎁 Diskon: {discount_percent}% (`{discount_info['code']}`)",
+                    f"💰 **Harga yang harus dibayar: Rp {final_amount:,}**",
+                ]
+            )
+        else:
+            parts.append(f"💰 Harga: **Rp {final_amount:,}**")
 
-📦 Paket: **{days_text}**
-💰 Harga: **Rp {amount:,}**
-
-🔢 **KODE PEMBAYARAN:**
-`{code}`
-
-📤 **Cara bayar:**
-1. Transfer ke salah satu:
-   • **GoPay:** {E_WALLET_NUMBER}
-   • **OVO:** {E_WALLET_NUMBER}
-   • **DANA:** {E_WALLET_NUMBER}
-   
-2. **PENTING:** Isi berita/catatan transfer dengan kode: `{code}`
-
-3. Screenshot bukti transfer
-
-4. Kirim screenshot ke chat ini
-
-⏰ Kode berlaku 1 jam.
-🤖 Bot akan auto-verify setelah kamu kirim screenshot.
-"""
+        parts.extend(
+            [
+                "",
+                "🔢 **KODE PEMBAYARAN:**",
+                f"`{code}`",
+                "",
+                "📤 **Cara bayar:**",
+                "1. Transfer ke salah satu:",
+                f"   • **GoPay:** {E_WALLET_NUMBER}",
+                f"   • **OVO:** {E_WALLET_NUMBER}",
+                f"   • **DANA:** {E_WALLET_NUMBER}",
+                "",
+                f"2. **PENTING:** Isi berita/catatan transfer dengan kode: `{code}`",
+                "",
+                "3. Screenshot bukti transfer",
+                "",
+                "4. Kirim screenshot ke chat ini",
+                "",
+                "⏰ Kode berlaku 1 jam.",
+                "🤖 Bot akan auto-verify setelah kamu kirim screenshot.",
+            ]
+        )
+        text = "\n".join(parts)
 
     await query.edit_message_text(text, parse_mode="Markdown")
 
@@ -553,6 +605,7 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = user_payment["code"]
     amount = user_payment["amount"]
     days = user_payment["days"]
+    discount_code = user_payment.get("discount_code") or ""
 
     # Beri tahu user bahwa verifikasi sedang diproses
     if lang == "en":
@@ -773,6 +826,30 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         r.setex(f"user:{user_id}:premium", days * 86400, "1")
         delete_payment_code(code)
 
+        # Jika pembayaran menggunakan kode diskon, tandai sebagai terpakai dan hapus dari user
+        if discount_code:
+            try:
+                mark_discount_used(discount_code)
+                clear_user_discount(user_id)
+            except Exception:
+                pass
+
+        # Catat riwayat pembayaran manual (otomatis terverifikasi)
+        try:
+            log_payment(
+                user_id=user_id,
+                source="manual_auto",
+                amount=amount,
+                days=days,
+                wallet=wallet,
+                code=code,
+                status="ok",
+                admin_id=None,
+                meta={"discount_code": discount_code} if discount_code else None,
+            )
+        except Exception:
+            pass
+
         days_text_id = f"{days} hari" if days < 365 else "1 tahun"
         days_text_en = f"{days} days" if days < 365 else "1 year"
 
@@ -842,6 +919,22 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(
         f"Manual payment verification FAILED for user {user_id}, code={code}, amount={amount}"
     )
+
+    # Catat juga sebagai riwayat gagal (untuk debugging/admin)
+    try:
+        log_payment(
+            user_id=user_id,
+            source="manual_auto",
+            amount=amount,
+            days=days,
+            wallet=wallet,
+            code=code,
+            status="failed",
+            admin_id=None,
+            meta={"reason": "ocr_failed"},
+        )
+    except Exception:
+        pass
 
 async def set_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1879,6 +1972,15 @@ async def payreview_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     days = int(info.get("days", 0)) if info.get("days") else 0
     wallet = info.get("wallet", "UNKNOWN")
 
+    # Cari info payment code (untuk mengetahui apakah ada diskon)
+    discount_code = ""
+    try:
+        payment_info = verify_payment_code(code)
+        if payment_info and payment_info.get("discount_code"):
+            discount_code = payment_info["discount_code"]
+    except Exception:
+        discount_code = ""
+
     # Bersihkan key review agar tidak diproses dua kali
     r.delete(review_key)
 
@@ -1899,8 +2001,28 @@ async def payreview_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             r.setex(f"user:{target_user_id}:premium", days * 86400, "1")
             if code:
                 delete_payment_code(code)
+            # Jika ada kode diskon, tandai sebagai terpakai dan hapus dari user
+            if discount_code:
+                mark_discount_used(discount_code)
+                clear_user_discount(target_user_id)
         except Exception as exc:
             logger.warning(f"Failed to grant premium in payreview for user {target_user_id}: {exc}")
+
+        # Catat riwayat pembayaran manual (disetujui admin)
+        try:
+            log_payment(
+                user_id=target_user_id,
+                source="manual_admin",
+                amount=amount,
+                days=days,
+                wallet=wallet,
+                code=code,
+                status="ok",
+                admin_id=admin_id,
+                meta={"discount_code": discount_code} if discount_code else None,
+            )
+        except Exception:
+            pass
 
         # Beri tahu user
         if user_lang == "en":
@@ -1941,6 +2063,22 @@ async def payreview_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
     else:
         # Tolak pembayaran: tidak mengubah premium, hanya info ke user
+        # Catat sebagai riwayat gagal / ditolak admin
+        try:
+            log_payment(
+                user_id=target_user_id,
+                source="manual_admin",
+                amount=amount,
+                days=days,
+                wallet=wallet,
+                code=code,
+                status="rejected",
+                admin_id=admin_id,
+                meta={"discount_code": discount_code} if discount_code else None,
+            )
+        except Exception:
+            pass
+
         if user_lang == "en":
             text_user = (
                 "❌ Your manual payment could not be verified and was *rejected* by the admin.\n\n"
@@ -1978,6 +2116,217 @@ async def payreview_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Kirim konfirmasi ke admin (separate message agar tidak perlu edit caption/text)
     await context.bot.send_message(chat_id=admin_id, text=text_admin, parse_mode="Markdown")
 
+
+
+async def create_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Membuat kode diskon baru (admin only).
+
+    Cara pakai:
+    /creatediscount KODE PERSEN MAX_USES VALID_HOURS
+    Contoh:
+    /creatediscount DISKON50 50 10 72
+    """
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+
+    admin_lang = get_user_language(update.effective_user.id)
+
+    if len(context.args) != 4:
+        if admin_lang == "en":
+            text = "Usage: /creatediscount <code> <percent> <max_uses> <valid_hours>"
+        else:
+            text = "Cara pakai: /creatediscount <kode> <persen> <max_uses> <valid_hours>"
+        await update.message.reply_text(text)
+        return
+
+    raw_code = context.args[0]
+    try:
+        percent = int(context.args[1])
+        max_uses = int(context.args[2])
+        valid_hours = int(context.args[3])
+    except ValueError:
+        if admin_lang == "en":
+            text = "Percent, max_uses, and valid_hours must be numbers."
+        else:
+            text = "Persen, max_uses, dan valid_hours harus berupa angka."
+        await update.message.reply_text(text)
+        return
+
+    try:
+        info = create_discount_code(
+            raw_code=raw_code,
+            percent=percent,
+            max_uses=max_uses,
+            valid_hours=valid_hours,
+            created_by=update.effective_user.id,
+        )
+    except ValueError as exc:
+        await update.message.reply_text(str(exc))
+        return
+
+    code = info["code"]
+    percent = info["percent"]
+    max_uses = info["max_uses"]
+    expire_at = info["expire_at"]
+
+    if expire_at > 0:
+        dt = datetime.fromtimestamp(expire_at)
+        expire_str = dt.strftime("%Y-%m-%d %H:%M")
+    else:
+        expire_str = "∞"
+
+    if max_uses <= 0:
+        uses_str = "∞"
+    else:
+        uses_str = str(max_uses)
+
+    if admin_lang == "en":
+        text = (
+            f"✅ Discount code created.\n\n"
+            f"Code: `{code}`\n"
+            f"Percent: {percent}%\n"
+            f"Max uses: {uses_str}\n"
+            f"Valid until: {expire_str}"
+        )
+    else:
+        text = (
+            f"✅ Kode diskon dibuat.\n\n"
+            f"Kode: `{code}`\n"
+            f"Diskon: {percent}%\n"
+            f"Maks pemakaian: {uses_str}\n"
+            f"Berlaku sampai: {expire_str}"
+        )
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def apply_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Dipakai user untuk memasang kode diskon ke akunnya: /discount KODE."""
+    user_id = update.effective_user.id
+    lang = get_user_language(user_id)
+    update_user_activity(user_id)
+
+    if is_banned(user_id):
+        text = "❌ Your account is blocked." if lang == "en" else "❌ Akunmu diblokir."
+        await update.message.reply_text(text)
+        return
+
+    if not context.args:
+        if lang == "en":
+            text = "Usage: /discount <code>"
+        else:
+            text = "Cara pakai: /discount <kode>"
+        await update.message.reply_text(text)
+        return
+
+    raw_code = context.args[0]
+    info = assign_discount_to_user(user_id, raw_code)
+    if not info:
+        if lang == "en":
+            text = "❌ Invalid or expired discount code."
+        else:
+            text = "❌ Kode diskon tidak valid atau sudah kadaluarsa."
+        await update.message.reply_text(text)
+        return
+
+    code = info["code"]
+    percent = info["percent"]
+    expire_at = info["expire_at"]
+
+    if expire_at > 0:
+        dt = datetime.fromtimestamp(expire_at)
+        expire_str = dt.strftime("%Y-%m-%d %H:%M")
+    else:
+        expire_str = "tidak terbatas" if lang != "en" else "unlimited"
+
+    if lang == "en":
+        text = (
+            f"✅ Discount code applied: `{code}` ({percent}%).\n"
+            f"You can now use manual payment with a lower price.\n"
+            f"Valid until: {expire_str}."
+        )
+    else:
+        text = (
+            f"✅ Kode diskon berhasil dipasang: `{code}` ({percent}%).\n"
+            f"Sekarang kamu bisa bayar manual dengan harga lebih murah.\n"
+            f"Berlaku sampai: {expire_str}."
+        )
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def payhistory(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Menampilkan riwayat pembayaran user (admin only): /payhistory <user_id> [limit]."""
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+
+    admin_lang = get_user_language(update.effective_user.id)
+
+    if not context.args:
+        if admin_lang == "en":
+            text = "Usage: /payhistory <user_id> [limit]"
+        else:
+            text = "Cara pakai: /payhistory <user_id> [limit]"
+        await update.message.reply_text(text)
+        return
+
+    try:
+        target_user_id = int(context.args[0])
+    except ValueError:
+        if admin_lang == "en":
+            text = "User ID must be a number."
+        else:
+            text = "User ID harus berupa angka."
+        await update.message.reply_text(text)
+        return
+
+    limit = 10
+    if len(context.args) >= 2:
+        try:
+            limit = max(int(context.args[1]), 1)
+        except ValueError:
+            limit = 10
+
+    history = get_payment_history(target_user_id, limit=limit)
+    if not history:
+        if admin_lang == "en":
+            text = f"ℹ️ No payment history for user {target_user_id}."
+        else:
+            text = f"ℹ️ Belum ada riwayat pembayaran untuk user {target_user_id}."
+        await update.message.reply_text(text)
+        return
+
+    lines: list[str] = []
+    for item in history:
+        ts = item.get("ts", 0)
+        dt = datetime.fromtimestamp(ts)
+        ts_str = dt.strftime("%Y-%m-%d %H:%M")
+        source = item.get("source", "")
+        amount = item.get("amount", 0)
+        days = item.get("days", 0)
+        wallet = item.get("wallet", "")
+        code = item.get("code", "")
+        status = item.get("status", "")
+        admin_id = item.get("admin_id")
+
+        if admin_lang == "en":
+            line = (
+                f"{ts_str} • {source} • Rp {amount:,} • {days} day(s) • "
+                f"wallet={wallet or '-'} • code={code or '-'} • status={status}"
+            )
+            if admin_id:
+                line += f" • by_admin={admin_id}"
+        else:
+            line = (
+                f"{ts_str} • {source} • Rp {amount:,} • {days} hari • "
+                f"wallet={wallet or '-'} • code={code or '-'} • status={status}"
+            )
+            if admin_id:
+                line += f" • admin={admin_id}"
+
+        lines.append(line)
+
+    header = f"🧾 Riwayat pembayaran user `{target_user_id}`:" if admin_lang != "en" else f"🧾 Payment history for user `{target_user_id}`:"
+    text = header + "\n\n" + "\n".join(lines)
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2189,6 +2538,7 @@ def main():
     application.add_handler(CommandHandler("appeal", appeal))
     application.add_handler(CommandHandler("stats", stats))
     application.add_handler(CommandHandler("paymanual", paymanual))
+    application.add_handler(CommandHandler("discount", apply_discount))
     
     # Admin commands
     application.add_handler(CommandHandler("grant_premium", grant_premium))
@@ -2197,6 +2547,8 @@ def main():
     application.add_handler(CommandHandler("adminstats", admin_stats))
     application.add_handler(CommandHandler("list_banned", list_banned))
     application.add_handler(CommandHandler("unban", unban))
+    application.add_handler(CommandHandler("creatediscount", create_discount))
+    application.add_handler(CommandHandler("payhistory", payhistory))
     
     # Callback handlers
     application.add_handler(CallbackQueryHandler(payment_manual_callback, pattern="^payment_manual$"))
