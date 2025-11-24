@@ -340,12 +340,14 @@ def create_discount_code(
     max_uses: int,
     valid_hours: int,
     created_by: int,
+    min_amount: int = 0,
 ) -> dict:
     """Membuat kode diskon dan menyimpannya di Redis.
 
     - percent: 1–100 (dipotong jika di luar range)
     - max_uses: jumlah pemakaian (<=0 berarti tanpa batas)
     - valid_hours: masa berlaku dalam jam (<=0 berarti tanpa batas)
+    - min_amount: minimal harga paket (dalam rupiah) agar diskon bisa dipakai
     """
     code = _normalize_discount_code(raw_code)
     if not code:
@@ -355,6 +357,9 @@ def create_discount_code(
         percent = 1
     if percent > 100:
         percent = 100
+
+    if min_amount < 0:
+        min_amount = 0
 
     now = int(time.time())
     expire_at = now + valid_hours * 3600 if valid_hours > 0 else 0
@@ -368,6 +373,7 @@ def create_discount_code(
         "created_by": created_by,
         "created_at": now,
         "expire_at": expire_at,
+        "min_amount": min_amount,
     }
     r.hset(key, mapping=mapping)
     if valid_hours > 0:
@@ -399,6 +405,7 @@ def get_discount_info(raw_code: str) -> Optional[dict]:
         expire_at = int(data.get("expire_at", 0))
         created_at = int(data.get("created_at", now))
         created_by = int(data.get("created_by", 0)) if data.get("created_by") else 0
+        min_amount = int(data.get("min_amount", 0)) if data.get("min_amount") else 0
     except (TypeError, ValueError):
         return None
 
@@ -421,6 +428,7 @@ def get_discount_info(raw_code: str) -> Optional[dict]:
         "expire_at": expire_at,
         "created_at": created_at,
         "created_by": created_by,
+        "min_amount": min_amount,
     }
 
 

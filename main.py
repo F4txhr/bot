@@ -2122,20 +2122,20 @@ async def create_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Membuat kode diskon baru (admin only).
 
     Cara pakai:
-    /creatediscount KODE PERSEN MAX_USES VALID_HOURS
+    /creatediscount KODE PERSEN MAX_USES VALID_HOURS MIN_AMOUNT
     Contoh:
-    /creatediscount DISKON50 50 10 72
+    /creatediscount DISKON50 50 10 72 7000
     """
     if update.effective_user.id not in ADMIN_IDS:
         return
 
     admin_lang = get_user_language(update.effective_user.id)
 
-    if len(context.args) != 4:
+    if len(context.args) != 5:
         if admin_lang == "en":
-            text = "Usage: /creatediscount <code> <percent> <max_uses> <valid_hours>"
+            text = "Usage: /creatediscount <code> <percent> <max_uses> <valid_hours> <min_amount>"
         else:
-            text = "Cara pakai: /creatediscount <kode> <persen> <max_uses> <valid_hours>"
+            text = "Cara pakai: /creatediscount <kode> <persen> <max_uses> <valid_hours> <min_amount>"
         await update.message.reply_text(text)
         return
 
@@ -2144,11 +2144,12 @@ async def create_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         percent = int(context.args[1])
         max_uses = int(context.args[2])
         valid_hours = int(context.args[3])
+        min_amount = int(context.args[4])
     except ValueError:
         if admin_lang == "en":
-            text = "Percent, max_uses, and valid_hours must be numbers."
+            text = "Percent, max_uses, valid_hours, and min_amount must be numbers."
         else:
-            text = "Persen, max_uses, dan valid_hours harus berupa angka."
+            text = "Persen, max_uses, valid_hours, dan min_amount harus berupa angka."
         await update.message.reply_text(text)
         return
 
@@ -2159,6 +2160,7 @@ async def create_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
             max_uses=max_uses,
             valid_hours=valid_hours,
             created_by=update.effective_user.id,
+            min_amount=min_amount,
         )
     except ValueError as exc:
         await update.message.reply_text(str(exc))
@@ -2168,6 +2170,7 @@ async def create_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     percent = info["percent"]
     max_uses = info["max_uses"]
     expire_at = info["expire_at"]
+    min_amount = info.get("min_amount", 0)
 
     if expire_at > 0:
         dt = datetime.fromtimestamp(expire_at)
@@ -2186,6 +2189,7 @@ async def create_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Code: `{code}`\n"
             f"Percent: {percent}%\n"
             f"Max uses: {uses_str}\n"
+            f"Min amount: Rp {min_amount:,}\n"
             f"Valid until: {expire_str}"
         )
     else:
@@ -2194,6 +2198,7 @@ async def create_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Kode: `{code}`\n"
             f"Diskon: {percent}%\n"
             f"Maks pemakaian: {uses_str}\n"
+            f"Minimal harga paket: Rp {min_amount:,}\n"
             f"Berlaku sampai: {expire_str}"
         )
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -2231,6 +2236,7 @@ async def apply_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = info["code"]
     percent = info["percent"]
     expire_at = info["expire_at"]
+    min_amount = info.get("min_amount", 0)
 
     if expire_at > 0:
         dt = datetime.fromtimestamp(expire_at)
@@ -2242,13 +2248,15 @@ async def apply_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (
             f"✅ Discount code applied: `{code}` ({percent}%).\n"
             f"You can now use manual payment with a lower price.\n"
-            f"Valid until: {expire_str}."
+            f"Valid until: {expire_str}.\n"
+            f"Minimum package price to use this discount: Rp {min_amount:,}."
         )
     else:
         text = (
             f"✅ Kode diskon berhasil dipasang: `{code}` ({percent}%).\n"
             f"Sekarang kamu bisa bayar manual dengan harga lebih murah.\n"
-            f"Berlaku sampai: {expire_str}."
+            f"Berlaku sampai: {expire_str}.\n"
+            f"Minimal harga paket untuk memakai diskon ini: Rp {min_amount:,}."
         )
     await update.message.reply_text(text, parse_mode="Markdown")
 
