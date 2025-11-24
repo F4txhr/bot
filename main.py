@@ -183,24 +183,35 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         name = raw_name or "kamu"
 
+    is_admin = user_id in ADMIN_IDS
+
     text_id = f"""
 👋 Hai, {name}!
 
 Selamat datang di **ShadowChat** — tempat kamu bisa ngobrol **anonim** dengan orang baru ✨
 
-🎯 **Cara pakai singkat:**
+🎯 **Perintah utama untuk ngobrol:**
 • `/search` — cari pasangan obrolan
 • `/stop` — hentikan obrolan yang sedang berjalan
-• `/next` — ganti ke pasangan berikutnya
+• `/next` atau `/skip` — ganti ke pasangan berikutnya
 • `/showid` — kirim link profil Telegram-mu ke partner
 • `/report` — laporkan pengguna yang melanggar aturan
 
-💎 **Pengen lebih terarah?**
-Aktifkan premium untuk:
-• Cari berdasarkan gender
-• Cocokkan berdasarkan minat
+💎 **Fitur premium:**
+• Cari berdasarkan gender dengan `/search male` atau `/search female`
+• Cocokkan berdasarkan minat (atur dengan `/setinterest` — khusus premium)
 • Prioritas dalam antrian
-• Statistik obrolan yang lebih lengkap
+• Statistik obrolan yang lebih lengkap (`/stats`)
+• Pengaturan gender dengan `/setgender` (khusus premium)
+
+💰 **Upgrade premium & diskon:**
+• `/premium` — info harga dan cara pembayaran (Trakteer & transfer manual)
+• `/discount` — lihat dan klaim kode diskon yang tersedia
+
+ℹ️ **Lainnya:**
+• `/lang` — ganti bahasa (Indonesia/English)
+• `/paymanual` — minta admin cek pembayaran manual
+• `/appeal` — ajukan banding jika akun diblokir
 
 ⚠️ **Catatan penting:**
 Jangan kirim konten ilegal, SARA, atau hal yang mengganggu pengguna lain.
@@ -214,19 +225,28 @@ Siap ngobrol? Ketik `/search` sekarang!
 
 Welcome to **ShadowChat** — an app for **anonymous** chats with new people ✨
 
-🎯 **Quick guide:**
+🎯 **Main chat commands:**
 • `/search` — find a chat partner
 • `/stop` — end the current chat
-• `/next` — switch to the next partner
+• `/next` or `/skip` — switch to the next partner
 • `/showid` — share your Telegram profile with your partner
 • `/report` — report users who break the rules
 
-💎 **Want a better match?**
-Get premium to:
-• Search by gender
-• Match based on interests
-• Get priority in the queue
-• See more detailed chat stats
+💎 **Premium features:**
+• Search by gender with `/search male` or `/search female`
+• Match based on interests (set with `/setinterest` — premium only)
+• Priority in the queue
+• More detailed stats (`/stats`)
+• Set your gender with `/setgender` (premium only)
+
+💰 **Upgrade & discounts:**
+• `/premium` — prices and payment methods (Trakteer & manual transfer)
+• `/discount` — view and claim available discount codes
+
+ℹ️ **Others:**
+• `/lang` — change language (id/en)
+• `/paymanual` — ask admin to manually verify your payment
+• `/appeal` — request a review if your account is blocked
 
 ⚠️ **Important:**
 Do not send illegal, hateful, or harmful content.
@@ -236,10 +256,121 @@ Ready to chat? Type `/search` now!
 """
 
     text = text_en if lang == "en" else text_id
+
+    if is_admin:
+        if lang == "en":
+            text += "\n\n🛠 You are an *admin*. Type `/help` to see all admin commands."
+        else:
+            text += "\n\n🛠 Kamu adalah *admin*. Gunakan `/help` untuk melihat semua perintah admin."
+
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await start(update, context)
+    """Menampilkan daftar perintah, dibedakan untuk user biasa dan admin."""
+    user_id = update.effective_user.id
+    lang = get_user_language(user_id)
+    is_admin = user_id in ADMIN_IDS
+
+    if not is_admin:
+        if lang == "en":
+            text = (
+                "📚 *Command list (for users)*\n\n"
+                "General:\n"
+                "• `/start` — Show introduction and main menu.\n"
+                "• `/help` — Show this command list.\n"
+                "• `/lang` — Change language (id/en).\n\n"
+                "Chat:\n"
+                "• `/search` — Find a chat partner.\n"
+                "  Optional: `/search male|female|any` — gender filter is *premium only*.\n"
+                "• `/stop` — End the current chat.\n"
+                "• `/next` or `/skip` — Skip and look for a new partner.\n\n"
+                "Profile & premium:\n"
+                "• `/setgender` — Set your gender (*premium only*).\n"
+                "• `/setinterest` — Set your interests/hobbies (*premium only*).\n"
+                "• `/stats` — View your chat stats and active discount code.\n"
+                "• `/premium` — Premium features and payment info.\n\n"
+                "Safety & support:\n"
+                "• `/showid` — Share your Telegram profile with your partner.\n"
+                "• `/report` — Report your current/last partner.\n"
+                "• `/appeal` — Ask for review if your account is blocked.\n"
+                "• `/paymanual` — Ask admin to manually review your payment.\n"
+                "• `/discount` — View and claim available discount codes.\n"
+            )
+        else:
+            text = (
+                "📚 *Daftar perintah (untuk pengguna)*\n\n"
+                "Umum:\n"
+                "• `/start` — Tampilkan perkenalan dan menu utama.\n"
+                "• `/help` — Tampilkan daftar perintah ini.\n"
+                "• `/lang` — Ganti bahasa (id/en).\n\n"
+                "Obrolan:\n"
+                "• `/search` — Cari pasangan obrolan.\n"
+                "  Opsional: `/search male|female|any` — filter gender *khusus premium*.\n"
+                "• `/stop` — Hentikan obrolan saat ini.\n"
+                "• `/next` atau `/skip` — Lewati dan cari partner baru.\n\n"
+                "Profil & premium:\n"
+                "• `/setgender` — Atur jenis kelamin (*khusus pengguna premium*).\n"
+                "• `/setinterest` — Atur minat/hobi (*khusus pengguna premium*).\n"
+                "• `/stats` — Lihat statistik obrolan dan kode diskon aktif.\n"
+                "• `/premium` — Info fitur premium dan cara pembayaran.\n\n"
+                "Keamanan & bantuan:\n"
+                "• `/showid` — Kirim link profil Telegram ke partner.\n"
+                "• `/report` — Laporkan partner saat ini/terakhir.\n"
+                "• `/appeal` — Ajukan banding jika akun diblokir.\n"
+                "• `/paymanual` — Minta admin cek pembayaran secara manual.\n"
+                "• `/discount` — Lihat dan klaim kode diskon yang tersedia.\n"
+            )
+        await update.message.reply_text(text, parse_mode="Markdown")
+        return
+
+    # Help untuk admin
+    if lang == "en":
+        text = (
+            "🛠 *Admin command list*\n\n"
+            "For all users:\n"
+            "• `/start`, `/help`, `/lang`\n"
+            "• `/search`, `/stop`, `/next`, `/skip`\n"
+            "• `/setgender`, `/setinterest`, `/stats`, `/premium`\n"
+            "• `/showid`, `/report`, `/appeal`, `/paymanual`, `/discount`\n\n"
+            "Admin only:\n"
+            "• `/ping` — Simple health check (bot & Redis).\n"
+            "• `/grant_premium <user_id> <days>` — Grant premium manually.\n"
+            "• `/giftpremium <user_count> <days>` — Randomly gift premium to active free users.\n"
+            "• `/broadcast <message>` — Send announcement to active users.\n"
+            "• `/adminstats` — Global stats (users, sessions, queue, premium, banned).\n"
+            "• `/list_banned` — List banned users.\n"
+            "• `/unban <user_id>` — Unban a user.\n\n"
+            "Discount & payments:\n"
+            "• `/creatediscount <code> <percent> <max_uses> <valid_hours> <min_amount>` — Create discount code.\n"
+            "• `/discountstats` — Show all discount codes and their usage.\n"
+            "• `/discountusers <code>` — List users who used a specific discount code.\n"
+            "• `/cleardiscount <code>` — Disable a discount code.\n"
+            "• `/payhistory <user_id> [limit]` — Show payment history for a user.\n"
+        )
+    else:
+        text = (
+            "🛠 *Daftar perintah admin*\n\n"
+            "Untuk semua pengguna:\n"
+            "• `/start`, `/help`, `/lang`\n"
+            "• `/search`, `/stop`, `/next`, `/skip`\n"
+            "• `/setgender`, `/setinterest`, `/stats`, `/premium`\n"
+            "• `/showid`, `/report`, `/appeal`, `/paymanual`, `/discount`\n\n"
+            "Khusus admin:\n"
+            "• `/ping` — Cek cepat apakah bot & Redis berjalan.\n"
+            "• `/grant_premium <user_id> <days>` — Beri premium secara manual.\n"
+            "• `/giftpremium <jumlah_user> <days>` — Bagi-bagi premium ke user gratis yang aktif.\n"
+            "• `/broadcast <pesan>` — Kirim pengumuman ke user aktif.\n"
+            "• `/adminstats` — Statistik global (user, sesi, antrian, premium, banned).\n"
+            "• `/list_banned` — Daftar user yang diblokir.\n"
+            "• `/unban <user_id>` — Buka blokir user.\n\n"
+            "Diskon & pembayaran:\n"
+            "• `/creatediscount <kode> <persen> <max_uses> <valid_hours> <min_amount>` — Buat kode diskon.\n"
+            "• `/discountstats` — Lihat semua kode diskon dan pemakaiannya.\n"
+            "• `/discountusers <kode>` — Lihat siapa saja yang pernah memakai kode tertentu.\n"
+            "• `/cleardiscount <kode>` — Menonaktifkan (disable) sebuah kode diskon.\n"
+            "• `/payhistory <user_id> [limit]` — Lihat riwayat pembayaran user.\n"
+        )
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 async def premium_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1031,6 +1162,15 @@ async def set_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text)
         return
 
+    # Hanya pengguna premium yang boleh mengatur gender
+    if not r.exists(f"user:{user_id}:premium"):
+        if lang == "en":
+            text = "🔒 This command is only available for premium users. Type /premium for more info."
+        else:
+            text = "🔒 Perintah ini khusus untuk pengguna premium. Ketik /premium untuk info lebih lanjut."
+        await update.message.reply_text(text)
+        return
+
     if not context.args:
         if lang == "en":
             text = "Usage: /setgender male | female | skip"
@@ -1058,7 +1198,7 @@ async def set_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 async def set_interest(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mengatur minat/hobi user untuk kebutuhan pencocokan."""
+    """Mengatur minat/hobi user untuk kebutuhan pencocokan (khusus premium)."""
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
     update_user_activity(user_id)
@@ -1068,6 +1208,15 @@ async def set_interest(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = "❌ Your account is blocked."
         else:
             text = "❌ Akunmu diblokir."
+        await update.message.reply_text(text)
+        return
+
+    # Hanya pengguna premium yang boleh mengatur minat
+    if not r.exists(f"user:{user_id}:premium"):
+        if lang == "en":
+            text = "🔒 This command is only available for premium users. Type /premium for more info."
+        else:
+            text = "🔒 Perintah ini khusus untuk pengguna premium. Ketik /premium untuk info lebih lanjut."
         await update.message.reply_text(text)
         return
 

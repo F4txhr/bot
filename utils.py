@@ -399,6 +399,7 @@ def create_discount_code(
         "created_at": now,
         "expire_at": expire_at,
         "min_amount": min_amount,
+        "disabled": 0,
     }
     r.hset(key, mapping=mapping)
     if valid_hours > 0:
@@ -409,7 +410,7 @@ def create_discount_code(
 
 
 def get_discount_info(raw_code: str) -> Optional[dict]:
-    """Mengambil info kode diskon jika masih berlaku."""
+    """Mengambil info kode diskon jika masih berlaku (aktif, belum habis, tidak disabled)."""
     code = _normalize_discount_code(raw_code)
     if not code:
         return None
@@ -431,14 +432,19 @@ def get_discount_info(raw_code: str) -> Optional[dict]:
         created_at = int(data.get("created_at", now))
         created_by = int(data.get("created_by", 0)) if data.get("created_by") else 0
         min_amount = int(data.get("min_amount", 0)) if data.get("min_amount") else 0
+        disabled = int(data.get("disabled", 0)) if data.get("disabled") else 0
     except (TypeError, ValueError):
+        return None
+
+    # Jika disabled oleh admin, anggap tidak berlaku lagi
+    if disabled:
         return None
 
     # Cek kadaluarsa waktu
     if expire_at > 0 and now > expire_at:
         return None
 
-    # Cek jumlah pemakaian
+    # Cek jumlah pemakaian global
     if max_uses > 0 and used >= max_uses:
         return None
 
