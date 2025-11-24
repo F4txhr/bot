@@ -680,12 +680,14 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "DES": 12,
             "DESEMBER": 12,
         }
+        # Izinkan spasi opsional antara bulan dan tahun, karena OCR kadang menghasilkan
+        # "09 Nov2025" (tanpa spasi) atau "09Nov 2025".
         date_regex = (
-            r"(\d{1,2})\s+("
+            r"(\d{1,2})\s*("
             r"JAN|JANUARI|FEB|FEBRUARI|MAR|MARET|APR|APRIL|MEI|"
             r"JUN|JUNI|JUL|JULI|AGU|AGUSTUS|SEP|SEPT|SEPTEMBER|"
             r"OKT|OKTOBER|NOV|NOVEMBER|DES|DESEMBER"
-            r")\s+(\d{4})"
+            r")\s*(\d{4})"
         )
         date_match = re.search(date_regex, ocr_upper)
         time_match = re.search(r"(\d{1,2}):(\d{2})", ocr_upper)
