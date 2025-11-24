@@ -909,7 +909,7 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Jika pembayaran menggunakan kode diskon, tandai sebagai terpakai dan hapus dari user
         if discount_code:
             try:
-                mark_discount_used(discount_code)
+                mark_discount_used(discount_code, user_id=user_id)
                 clear_user_discount(user_id)
             except Exception:
                 pass
@@ -1723,25 +1723,87 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         interests = "Not set" if lang == "en" else "Belum diatur"
 
+    discount_info = stats.get("discount")
+
     if lang == "en":
+        discount_block = ""
+        if discount_info:
+            code = discount_info["code"]
+            percent = discount_info["percent"]
+            min_amount = discount_info["min_amount"]
+            max_uses = discount_info["max_uses"]
+            remaining_uses = discount_info["remaining_uses"]
+            used_by_user = discount_info["used_by_user"]
+            max_per_user = discount_info["max_per_user"]
+            expire_at = discount_info["expire_at"]
+
+            if expire_at > 0:
+                dt = datetime.fromtimestamp(expire_at)
+                expire_str = dt.strftime("%Y-%m-%d %H:%M")
+            else:
+                expire_str = "no time limit"
+
+            if remaining_uses < 0 or max_uses <= 0:
+                global_quota = "unlimited"
+            else:
+                global_quota = f"{remaining_uses} left (of {max_uses})"
+
+            discount_block = (
+                "\n🎁 **Active discount code:**\n"
+                f"- `{code}` — {percent}% off, min package Rp {min_amount:,}\n"
+                f"- Your personal usage: {used_by_user}/{max_per_user} times\n"
+                f"- Global quota: {global_quota}\n"
+                f"- Valid until: {expire_str}\n"
+            )
+
         text = f"""
 📊 **Your stats**
 
 👤 **Status:** {premium_status}
 🔢 **Total chats:** {stats['total_chats']}
 ⚥ **Gender:** {gender}
-🎯 **Interests:** {interests}
+🎯 **Interests:** {interests}{discount_block}
 
 Type /premium for upgrade info.
 """
     else:
+        discount_block = ""
+        if discount_info:
+            code = discount_info["code"]
+            percent = discount_info["percent"]
+            min_amount = discount_info["min_amount"]
+            max_uses = discount_info["max_uses"]
+            remaining_uses = discount_info["remaining_uses"]
+            used_by_user = discount_info["used_by_user"]
+            max_per_user = discount_info["max_per_user"]
+            expire_at = discount_info["expire_at"]
+
+            if expire_at > 0:
+                dt = datetime.fromtimestamp(expire_at)
+                expire_str = dt.strftime("%Y-%m-%d %H:%M")
+            else:
+                expire_str = "tanpa batas waktu"
+
+            if remaining_uses < 0 or max_uses <= 0:
+                global_quota = "tak terbatas"
+            else:
+                global_quota = f"sisa {remaining_uses} dari {max_uses}"
+
+            discount_block = (
+                "\n🎁 **Kode diskon aktif:**\n"
+                f"- `{code}` — diskon {percent}%, minimal paket Rp {min_amount:,}\n"
+                f"- Pemakaian pribadimu: {used_by_user}/{max_per_user} kali\n"
+                f"- Kuota global: {global_quota}\n"
+                f"- Berlaku sampai: {expire_str}\n"
+            )
+
         text = f"""
 📊 **Statistik kamu**
 
 👤 **Status:** {premium_status}
 🔢 **Total obrolan:** {stats['total_chats']}
 ⚥ **Jenis kelamin:** {gender}
-🎯 **Minat:** {interests}
+🎯 **Minat:** {interests}{discount_block}
 
 Ketik /premium untuk info upgrade.
 """
@@ -2083,7 +2145,7 @@ async def payreview_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 delete_payment_code(code)
             # Jika ada kode diskon, tandai sebagai terpakai dan hapus dari user
             if discount_code:
-                mark_discount_used(discount_code)
+                mark_discount_used(discount_code, user_id=target_user_id)
                 clear_user_discount(target_user_id)
         except Exception as exc:
             logger.warning(f"Failed to grant premium in payreview for user {target_user_id}: {exc}")

@@ -29,6 +29,9 @@ r = redis.from_url(REDIS_URL, decode_responses=True)
 TRUST_MIN = 0
 TRUST_MAX = 100
 
+# Maksimal pemakaian kode diskon per user untuk setiap kode
+MAX_DISCOUNT_PER_USER = 3
+
 
 def get_user_language(user_id: int) -> str:
     """Mengembalikan bahasa tampilan untuk user (id/en)."""
@@ -266,7 +269,7 @@ def get_free_users() -> List[int]:
 
 def get_user_stats(user_id: int) -> dict:
     """Mengembalikan statistik dasar untuk user tertentu."""
-    stats = {
+    stats: dict[str, object] = {
         "total_chats": int(r.get(f"stats:{user_id}:total_chats") or 0),
         "premium": bool(r.exists(f"user:{user_id}:premium")),
         "gender": r.get(f"user:{user_id}:gender") or "not_set",
@@ -280,6 +283,28 @@ def get_user_stats(user_id: int) -> dict:
             stats["premium_days_left"] = math.ceil(ttl / 86400)
         else:
             stats["premium_days_left"] = 0
+
+    # Informasi kode diskon aktif (jika ada)
+    code = get_user_discount(user_id)
+    if code:
+        info = get_discount_info(code)
+        if info:
+            usage_key = f"discount_usage:{info['code']}:{user_id}"
+            try:
+                used_by_user = int(r.get(usage_key) or 0)
+            except (TypeError, ValueError):
+                used_by_user = 0
+
+            stats["discount"] = {
+                "code": info["code"],
+                "percent": info["percent"],
+                "min_amount": info["min_amount"],
+                "max_uses": info["max_uses"],
+                "remaining_uses": info["remaining_uses"],
+                "expire_at": info["expire_at"],
+                "used_by_user": used_by_user,
+                "max_per_user": MAX_DISCOUNT_PER_USER,
+            }
 
     return stats
 
@@ -435,10 +460,21 @@ def get_discount_info(raw_code: str) -> Optional[dict]:
 def assign_discount_to_user(user_id: int, raw_code: str) -> Optional[dict]:
     """Mengaitkan kode diskon yang masih berlaku ke user.
 
-    Mengembalikan info diskon jika berhasil, atau None jika invalid.
+    Mengembalikan info diskon jika berhasil, atau None jika invalid / kuota user habis.
     """
     info = get_discount_info(raw_code)
     if not info:
+        return None
+
+    code = info["code"]
+    # Batasi pemakaian per user per kode
+    usage_key = f"discount_usage:{code}:{user_id}"
+    try:
+        used_by_user = int(r.get(usage_key) or 0)
+    except (TypeError, ValueError):
+        used_by_user = 0
+
+    if used_by_user >= MAX_DISCOUNT_PER_USER:
         return None
 
     key = f"user_discount:{user_id}"
@@ -448,9 +484,9 @@ def assign_discount_to_user(user_id: int, raw_code: str) -> Optional[dict]:
         ttl = max(info["expire_at"] - now, 0)
 
     if ttl and ttl > 0:
-        r.setex(key, ttl, info["code"])
+        r.setex(key, ttl, code)
     else:
-        r.set(key, info["code"])
+        r.set(key, code)
     return info
 
 
@@ -465,8 +501,12 @@ def clear_user_discount(user_id: int) -> None:
     r.delete(f"user_discount:{user_id}")
 
 
-def mark_discount_used(raw_code: str) -> None:
-    """Menandai bahwa suatu kode diskon telah digunakan sekali."""
+def mark_discount_used(raw_code: str, user_id: Optional[int] = None) -> None:
+    """Menandai bahwa suatu kode diskon telah digunakan sekali.
+
+    - Menaikkan counter global 'used' hingga mencapai max_uses (jika > 0).
+    - Jika user_id diberikan, menaikkan juga counter pemakaian per user.
+    """
     code = _normalize_discount_code(raw_code)
     if not code:
         return
@@ -483,15 +523,21 @@ def mark_discount_used(raw_code: str) -> None:
     except (TypeError, ValueError):
         max_uses = 0
 
-    # Jika max_uses <= 0 -> unlimited, tidak perlu dihitung.
-    if max_uses <= 0:
-        return
+    # Jika max_uses > 0, hitung pemakaian global
+    if max_uses > 0:
+        try:
+            r.hincrby(key, "used", 1)
+        except Exception:
+            # Jika ada masalah, biarkan saja, ini bukan operasi kritis.
+            pass
 
-    try:
-        r.hincrby(key, "used", 1)
-    except Exception:
-        # Jika ada masalah, biarkan saja, ini bukan operasi kritis.
-        return
+    # Hitung pemakaian per user (tidak tergantung max_uses)
+    if user_id is not None:
+        usage_key = f"discount_usage:{code}:{user_id}"
+        try:
+            r.incr(usage_key)
+        except Exception:
+            pass
 
 
 def log_payment(

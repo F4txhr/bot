@@ -7,7 +7,15 @@ from typing import Any, Dict
 from flask import Flask, request, jsonify
 
 from config import BOT_TOKEN, TRAKTEER_WEBHOOK_SECRET
-from utils import r, get_user_language, log_payment
+from utils import (
+    r,
+    get_user_language,
+    get_user_discount,
+    get_discount_info,
+    clear_user_discount,
+    mark_discount_used,
+    log_payment,
+)
 from telegram import Bot
 
 app = Flask(__name__)
@@ -128,10 +136,33 @@ def trakteer_webhook() -> Any:
     if not user_id:
         return jsonify({"status": "ignored", "reason": "no_user_id_in_message"}), 200
 
-    # Hitung durasi premium dari nominal (Rp 1.000 = 1 hari)
-    days = amount // 1000
-    if days <= 0:
+    # Hitung durasi premium dasar dari nominal (Rp 1.000 = 1 hari)
+    base_days = amount // 1000
+    if base_days <= 0:
         return jsonify({"status": "ignored", "reason": "amount_below_minimum"}), 200
+
+    # Logika diskon: jika user punya kode diskon aktif dan memenuhi min_amount,
+    # berikan bonus hari berdasarkan persentase diskon.
+    discount_code = None
+    bonus_days = 0
+    try:
+        active_code = get_user_discount(user_id)
+        discount_info = get_discount_info(active_code) if active_code else None
+    except Exception:
+        discount_info = None
+
+    if discount_info and amount >= discount_info.get("min_amount", 0):
+        discount_code = discount_info["code"]
+        percent = discount_info["percent"]
+        # Bonus hari = floor(base_days * percent/100), minimal 1
+        bonus_days = max((base_days * percent) // 100, 1)
+        try:
+            mark_discount_used(discount_code, user_id=user_id)
+            clear_user_discount(user_id)
+        except Exception:
+            pass
+
+    days = base_days + bonus_days
 
     # Perpanjang atau set premium di Redis
     key = f"user:{user_id}:premium"
@@ -151,13 +182,17 @@ def trakteer_webhook() -> Any:
             "transaction_id": data.get("transaction_id", ""),
             "supporter_name": data.get("supporter_name", ""),
         }
+        if discount_code:
+            meta["discount_code"] = discount_code
+            meta["base_days"] = base_days
+            meta["bonus_days"] = bonus_days
         log_payment(
             user_id=user_id,
             source="trakteer",
             amount=amount,
             days=days,
             wallet="TRAKTEER",
-            code="",
+            code=discount_code or "",
             status="ok",
             admin_id=None,
             meta=meta,
@@ -175,19 +210,37 @@ def trakteer_webhook() -> Any:
         total_days_left = new_ttl // 86400
 
         if lang == "en":
-            text = (
-                "🎉 Thank you for supporting via Trakteer!\n\n"
-                f"Your premium has been extended by {days} day(s).\n"
-                f"Total remaining premium: {total_days_left} day(s).\n\n"
-                "Use /setgender and /setinterest to set up your profile."
-            )
+            if discount_code:
+                text = (
+                    "🎉 Thank you for supporting via Trakteer!\n\n"
+                    f"Your premium has been extended by {days} day(s) "
+                    f"(base {base_days} + bonus {bonus_days} from discount code `{discount_code}`).\n"
+                    f"Total remaining premium: {total_days_left} day(s).\n\n"
+                    "Use /setgender and /setinterest to set up your profile."
+                )
+            else:
+                text = (
+                    "🎉 Thank you for supporting via Trakteer!\n\n"
+                    f"Your premium has been extended by {days} day(s).\n"
+                    f"Total remaining premium: {total_days_left} day(s).\n\n"
+                    "Use /setgender and /setinterest to set up your profile."
+                )
         else:
-            text = (
-                "🎉 Terima kasih sudah mendukung via Trakteer!\n\n"
-                f"Premium kamu bertambah {days} hari.\n"
-                f"Total sisa premium: {total_days_left} hari.\n\n"
-                "Gunakan /setgender dan /setinterest untuk mengatur profilmu."
-            )
+            if discount_code:
+                text = (
+                    "🎉 Terima kasih sudah mendukung via Trakteer!\n\n"
+                    f"Premium kamu bertambah {days} hari "
+                    f"(dasar {base_days} + bonus {bonus_days} dari kode diskon `{discount_code}`).\n"
+                    f"Total sisa premium: {total_days_left} hari.\n\n"
+                    "Gunakan /setgender dan /setinterest untuk mengatur profilmu."
+                )
+            else:
+                text = (
+                    "🎉 Terima kasih sudah mendukung via Trakteer!\n\n"
+                    f"Premium kamu bertambah {days} hari.\n"
+                    f"Total sisa premium: {total_days_left} hari.\n\n"
+                    "Gunakan /setgender dan /setinterest untuk mengatur profilmu."
+                )
 
         try:
             # Jalankan send_message di event loop async.
