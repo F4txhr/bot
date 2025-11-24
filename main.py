@@ -2204,6 +2204,55 @@ async def create_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     await update.message.reply_text(text, parse_mode="Markdown")
 
+    # Opsional: beritahu semua user aktif dalam 24 jam terakhir bahwa ada kode diskon baru
+    active_users = get_active_users(24)
+    for uid in active_users:
+        try:
+            user_lang = get_user_language(uid)
+        except Exception:
+            user_lang = "id"
+
+        if uses_str == "∞":
+            limit_str_en = "unlimited uses"
+            limit_str_id = "tanpa batas pemakaian"
+        else:
+            limit_str_en = f"up to {uses_str} uses"
+            limit_str_id = f"maksimal {uses_str} kali pakai"
+
+        if expire_str == "∞":
+            valid_str_en = "no time limit"
+            valid_str_id = "tanpa batas waktu"
+        else:
+            valid_str_en = f"until {expire_str}"
+            valid_str_id = f"sampai {expire_str}"
+
+        if user_lang == "en":
+            msg = (
+                "🎁 *New premium discount code available!*\n\n"
+                f"Code: `{code}`\n"
+                f"Discount: {percent}% (minimum package price Rp {min_amount:,})\n"
+                f"Limit: {limit_str_en}, valid {valid_str_en}.\n\n"
+                "To use it:\n"
+                f"1. Send `/discount {code}`\n"
+                "2. Then use manual payment from /premium."
+            )
+        else:
+            msg = (
+                "🎁 *Kode diskon premium baru tersedia!*\n\n"
+                f"Kode: `{code}`\n"
+                f"Diskon: {percent}% (minimal harga paket Rp {min_amount:,})\n"
+                f"Limit: {limit_str_id}, berlaku {valid_str_id}.\n\n"
+                "Cara pakai:\n"
+                f"1. Kirim `/discount {code}`\n"
+                "2. Lalu gunakan pembayaran manual dari /premium."
+            )
+
+        try:
+            await context.bot.send_message(chat_id=uid, text=msg, parse_mode="Markdown")
+            await asyncio.sleep(0.05)
+        except Exception:
+            continue
+
 
 async def apply_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Dipakai user untuk memasang kode diskon ke akunnya: /discount KODE."""
