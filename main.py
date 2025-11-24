@@ -1435,6 +1435,25 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             break
         # jika cand == user_id, abaikan (stale entry)
 
+    # Jika tidak ada partner di queue utama dan ini user premium dengan preferensi gender,
+    # coba fallback ke queue:free dan cari user (premium/non-premium) dengan gender yang sesuai.
+    if partner_id is None and is_premium and search_pref in ["male", "female"]:
+        free_len = r.llen("queue:free") or 0
+        for _ in range(free_len):
+            raw = r.lpop("queue:free")
+            if not raw:
+                break
+            cand = int(raw)
+            if cand == user_id:
+                # jangan match dengan diri sendiri
+                continue
+            cand_gender = r.get(f"user:{cand}:gender") or ""
+            if cand_gender == search_pref:
+                partner_id = cand
+                break
+            # jika tidak cocok, kembalikan ke antrian
+            r.rpush("queue:free", cand)
+
     if partner_id:
         session_key = f"session:{user_id}:{partner_id}"
         r.hset(session_key, mapping={"user_a": user_id, "user_b": partner_id})
@@ -1644,6 +1663,9 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _end_chat(update, context, mode="next")
+    # Setelah melewati partner saat ini, langsung mulai pencarian baru
+    # menggunakan preferensi (misalnya gender) yang sudah tersimpan.
+    await search(update, context)
 
 async def showid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mengirim link profil Telegram ke partner saat ini."""
