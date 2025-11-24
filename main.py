@@ -444,8 +444,9 @@ Follow these steps to activate premium automatically:
 
 After Trakteer sends the notification, the bot will automatically extend your premium based on the amount.
 
-ℹ️ *Note about discounts:*
-Discount codes (via `/discount`) are only applied to **manual transfer** payments. Trakteer donations do **not** use discount codes.
+ℹ️ *About discounts:*
+If you have a discount code (via `/discount`), activate it **before** donating.
+If your donation amount meets the minimum requirement of that code, you will get extra *bonus days* on top of the normal Trakteer days.
 """
         button_label = "🔗 Open Trakteer page"
     else:
@@ -466,8 +467,9 @@ Ikuti langkah ini supaya premium aktif otomatis:
 
 Setelah Trakteer mengirim notifikasi ke server, bot akan otomatis menambah durasi premium sesuai nominal.
 
-ℹ️ *Catatan tentang diskon:*
-Kode diskon (via `/discount`) hanya berlaku untuk pembayaran **transfer manual**. Donasi lewat Trakteer **tidak** memakai kode diskon.
+ℹ️ *Tentang diskon:*
+Kalau kamu punya kode diskon (via `/discount`), aktifkan **sebelum** donasi.
+Jika nominal donasi memenuhi minimal untuk kode tersebut, kamu akan mendapat *bonus hari* tambahan di atas hari premium normal dari Trakteer.
 """
         button_label = "🔗 Buka halaman Trakteer"
 
