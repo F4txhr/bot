@@ -21,7 +21,7 @@ from config import (
     BOT_TOKEN, REDIS_URL, ADMIN_IDS, 
     PREMIUM_PRICES, E_WALLET_NUMBER, E_WALLET_NAME,
     TRAKTEER_URL, AVAILABLE_INTERESTS, SEARCH_COOLDOWN,
-    AUTO_BAN_REPORTS, PAYMENT_LOG_CHAT_ID
+    AUTO_BAN_REPORTS, PAYMENT_LOG_CHAT_ID, REPORT_LOG_CHAT_ID
 )
 from utils import (
     censor_text,
@@ -1451,7 +1451,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text)
 
 async def _end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: str) -> None:
-    """Mengakhiri obrolan, dengan pesan berbeda untuk /stop dan /next, lalu minta rating/report."""
+    """Mengakhiri obrolan, dengan pesan berbeda untuk /stop dan /next, lalu minta rating/report ke kedua pihak."""
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
     update_user_activity(user_id)
@@ -1471,7 +1471,7 @@ async def _end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: st
     r.delete(session_key)
     r.delete(f"user:{user_id}")
 
-    # Beri tahu partner bahwa obrolan diakhiri oleh user
+    partner_lang = None
     if partner_id:
         r.delete(f"user:{partner_id}")
         try:
@@ -1490,7 +1490,7 @@ async def _end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: st
                 )
             await context.bot.send_message(partner_id, partner_text)
         except Exception:
-            pass
+            partner_lang = None
 
     # Pesan untuk user yang mengetik /stop atau /next
     if mode == "next":
@@ -1522,40 +1522,52 @@ async def _end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: st
 
     await update.message.reply_text(text_user)
 
-    # Kirim menu rating + report setelah obrolan berakhir
-    if partner_id:
-        if lang == "en":
-            text_feedback = (
+    # Helper untuk membangun keyboard rating+report
+    def build_feedback_keyboard(lang_code: str, target_partner_id: int) -> tuple[str, InlineKeyboardMarkup]:
+        if lang_code == "en":
+            text_fb = (
                 "How was your chat experience?\n"
                 "You can also report your partner if needed."
             )
-            keyboard = [
+            keyboard_fb = [
                 [
-                    InlineKeyboardButton("👍 Good chat", callback_data=f"rate_good:{partner_id}"),
-                    InlineKeyboardButton("😐 Just okay", callback_data=f"rate_neutral:{partner_id}"),
-                    InlineKeyboardButton("👎 Not pleasant", callback_data=f"rate_bad:{partner_id}"),
+                    InlineKeyboardButton("👍 Good chat", callback_data=f"rate_good:{target_partner_id}"),
+                    InlineKeyboardButton("😐 Just okay", callback_data=f"rate_neutral:{target_partner_id}"),
+                    InlineKeyboardButton("👎 Not pleasant", callback_data=f"rate_bad:{target_partner_id}"),
                 ],
                 [
-                    InlineKeyboardButton("🚨 Report this user", callback_data=f"report_menu:{partner_id}")
+                    InlineKeyboardButton("🚨 Report this user", callback_data=f"report_menu:{target_partner_id}")
                 ],
             ]
         else:
-            text_feedback = (
+            text_fb = (
                 "Bagaimana pengalaman obrolan barusan?\n"
                 "Kamu juga bisa melaporkan partner jika perlu."
             )
-            keyboard = [
+            keyboard_fb = [
                 [
-                    InlineKeyboardButton("👍 Obrolan oke", callback_data=f"rate_good:{partner_id}"),
-                    InlineKeyboardButton("😐 Biasa saja", callback_data=f"rate_neutral:{partner_id}"),
-                    InlineKeyboardButton("👎 Tidak menyenangkan", callback_data=f"rate_bad:{partner_id}"),
+                    InlineKeyboardButton("👍 Obrolan oke", callback_data=f"rate_good:{target_partner_id}"),
+                    InlineKeyboardButton("😐 Biasa saja", callback_data=f"rate_neutral:{target_partner_id}"),
+                    InlineKeyboardButton("👎 Tidak menyenangkan", callback_data=f"rate_bad:{target_partner_id}"),
                 ],
                 [
-                    InlineKeyboardButton("🚨 Laporkan pengguna", callback_data=f"report_menu:{partner_id}")
+                    InlineKeyboardButton("🚨 Laporkan pengguna", callback_data=f"report_menu:{target_partner_id}")
                 ],
             ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(text_feedback, reply_markup=reply_markup)
+        return text_fb, InlineKeyboardMarkup(keyboard_fb)
+
+    # Kirim menu rating + report ke user pemicu
+    if partner_id:
+        text_feedback_user, reply_markup_user = build_feedback_keyboard(lang, partner_id)
+        await update.message.reply_text(text_feedback_user, reply_markup=reply_markup_user)
+
+        # Kirim juga ke partner yang diskip/dihentikan, jika masih bisa dihubungi
+        if partner_lang:
+            try:
+                text_feedback_partner, reply_markup_partner = build_feedback_keyboard(partner_lang, user_id)
+                await context.bot.send_message(partner_id, text_feedback_partner, reply_markup=reply_markup_partner)
+            except Exception:
+                pass
 
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1765,28 +1777,6 @@ async def report_reason_callback(update: Update, context: ContextTypes.DEFAULT_T
     if should_ban:
         ban_user(partner_id, "Auto-ban: Too many reports / low trust")
 
-        # Beri tahu admin
-        for admin_id in ADMIN_IDS:
-            try:
-                admin_lang = get_user_language(admin_id)
-                if admin_lang == "en":
-                    admin_text = (
-                        "🚨 **Auto-ban alert**\n"
-                        f"User `{partner_id}` has been automatically banned.\n"
-                        f"Reason: low trust score ({trust_score}), "
-                        f"{report_count} reports in 24 hours, last reason: {reason_code}."
-                    )
-                else:
-                    admin_text = (
-                        "🚨 **Auto-Ban Alert**\n"
-                        f"Pengguna `{partner_id}` telah di-ban otomatis.\n"
-                        f"Alasan: skor trust rendah ({trust_score}), "
-                        f"{report_count} laporan dalam 24 jam, alasan terakhir: {reason_code}."
-                    )
-                await context.bot.send_message(admin_id, admin_text, parse_mode="Markdown")
-            except Exception:
-                pass
-
         if lang == "en":
             text_user = (
                 "✅ Thank you for your report.\n"
@@ -1802,6 +1792,55 @@ async def report_reason_callback(update: Update, context: ContextTypes.DEFAULT_T
             text_user = "✅ Thank you for your report. The admins will review it."
         else:
             text_user = "✅ Terima kasih atas laporanmu. Admin akan meninjau."
+
+    # Log ke grup khusus report (jika diset)
+    if REPORT_LOG_CHAT_ID:
+        try:
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+            auto_ban_str_en = "yes" if should_ban else "no"
+            auto_ban_str_id = "ya" if should_ban else "tidak"
+
+            if lang == "en":
+                user_lang_report = "en"
+            else:
+                user_lang_report = "id"
+
+            if user_lang_report == "en":
+                text_group = (
+                    "🚨 *New user report*\n\n"
+                    f"Time: {now_str}\n"
+                    f"Reporter ID: `{user_id}`\n"
+                    f"Reported user ID: `{partner_id}`\n"
+                    f"Reason code: `{reason_code}`\n"
+                    f"Total reports (24h): {report_count}\n"
+                    f"Trust score: {trust_score} (level: {trust_level})\n"
+                    f"Auto-ban triggered: {auto_ban_str_en}\n\n"
+                    "Admin actions:\n"
+                    "- Use `/unban <user_id>` or `/ban` logic if needed.\n"
+                    "- This message is for monitoring; no inline approve/reject yet."
+                )
+            else:
+                text_group = (
+                    "🚨 *Laporan pengguna baru*\n\n"
+                    f"Waktu: {now_str}\n"
+                    f"Pelapor ID: `{user_id}`\n"
+                    f"User terlapor ID: `{partner_id}`\n"
+                    f"Kode alasan: `{reason_code}`\n"
+                    f"Total laporan (24 jam): {report_count}\n"
+                    f"Skor trust: {trust_score} (level: {trust_level})\n"
+                    f"Auto-ban aktif: {auto_ban_str_id}\n\n"
+                    "Aksi admin:\n"
+                    "- Gunakan `/unban <user_id>` atau logika ban jika diperlukan.\n"
+                    "- Pesan ini untuk monitoring; belum ada tombol approve/reject langsung."
+                )
+
+            await context.bot.send_message(
+                chat_id=REPORT_LOG_CHAT_ID,
+                text=text_group,
+                parse_mode="Markdown",
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to send report log to group: {exc}")
 
     # Edit pesan menu laporan menjadi pesan konfirmasi
     await query.edit_message_text(text_user)
