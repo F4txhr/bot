@@ -314,8 +314,18 @@ With premium, you can:
     text = text_en if lang == "en" else text_id
 
     keyboard = [
-        [InlineKeyboardButton("💳 Bayar via Trakteer" if lang == "id" else "💳 Pay via Trakteer", url=TRAKTEER_URL)],
-        [InlineKeyboardButton("📱 Transfer manual" if lang == "id" else "📱 Manual transfer", callback_data="payment_manual")],
+        [
+            InlineKeyboardButton(
+                "💳 Bayar via Trakteer" if lang == "id" else "💳 Pay via Trakteer",
+                callback_data="payment_trakteer",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📱 Transfer manual" if lang == "id" else "📱 Manual transfer",
+                callback_data="payment_manual",
+            )
+        ],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -403,6 +413,69 @@ async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     await query.edit_message_text(text)
+
+
+async def payment_trakteer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback untuk pembayaran via Trakteer (menampilkan instruksi khusus)."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    lang = get_user_language(user_id)
+    update_user_activity(user_id)
+
+    unique_code = f"SC{user_id}-{generate_payment_code()[:4]}"
+
+    if lang == "en":
+        text = f"""
+💳 **Payment via Trakteer**
+
+Follow these steps to activate premium automatically:
+
+1. Tap the button **Open Trakteer page** below.
+2. Choose the amount you want to donate.
+   • Every Rp 1.000 = 1 day of premium.
+   • Example: Rp 3.000 = 3 days, Rp 7.000 = 7 days, and so on.
+3. In the support message field, write one of the following:
+   • `ID: {user_id}`
+   • or your ID only: `{user_id}`
+   • or this unique code: `{unique_code}`
+4. Complete the payment.
+
+After Trakteer sends the notification, the bot will automatically extend your premium based on the amount.
+"""
+        button_label = "🔗 Open Trakteer page"
+    else:
+        text = f"""
+💳 **Pembayaran via Trakteer**
+
+Ikuti langkah ini supaya premium aktif otomatis:
+
+1. Tap tombol **Buka halaman Trakteer** di bawah.
+2. Pilih nominal yang ingin kamu dukung.
+   • Setiap Rp 1.000 = 1 hari premium.
+   • Contoh: Rp 3.000 = 3 hari, Rp 7.000 = 7 hari, dst.
+3. Di kolom pesan/ucapan dukungan, tulis salah satu:
+   • `ID: {user_id}`
+   • atau cukup ID-mu saja: `{user_id}`
+   • atau kode unik ini: `{unique_code}`
+4. Selesaikan pembayaran.
+
+Setelah Trakteer mengirim notifikasi ke server, bot akan otomatis menambah durasi premium sesuai nominal.
+"""
+        button_label = "🔗 Buka halaman Trakteer"
+
+    keyboard = [
+        [InlineKeyboardButton(button_label, url=TRAKTEER_URL)],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=text,
+        parse_mode="Markdown",
+        reply_markup=reply_markup,
+    )
 
 
 async def payment_manual_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2609,6 +2682,7 @@ def main():
     application.add_handler(CommandHandler("payhistory", payhistory))
     
     # Callback handlers
+    application.add_handler(CallbackQueryHandler(payment_trakteer_callback, pattern="^payment_trakteer$"))
     application.add_handler(CallbackQueryHandler(payment_manual_callback, pattern="^payment_manual$"))
     application.add_handler(CallbackQueryHandler(payment_duration_callback, pattern="^pay_"))
     application.add_handler(CallbackQueryHandler(language_callback, pattern="^lang_"))
