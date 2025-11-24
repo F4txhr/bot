@@ -623,8 +623,16 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Cari nominal yang barisnya mengandung "TOTAL" (Total Bayar)
         filtered_amounts = [amt for amt, line in amount_matches if "TOTAL" in line]
     elif wallet == "GOPAY":
-        # Cari nominal yang barisnya mengandung "JUMLAH"
-        filtered_amounts = [amt for amt, line in amount_matches if "JUMLAH" in line]
+        # Cari nominal yang barisnya mengandung label mirip "Jumlah".
+        # OCR GoPay kadang membaca "Jumlah" sebagai "Jumiah", dll.
+        # Hindari baris yang mengandung "BIAYA"/"ADMIN" agar tidak ambil biaya admin.
+        filtered_amounts = [
+            amt
+            for amt, line in amount_matches
+            if ("JUMLAH" in line or "JUMIAH" in line or "JUM" in line)
+            and "BIAYA" not in line
+            and "ADMIN" not in line
+        ]
     elif wallet == "OVO":
         # Cari nominal yang barisnya mengandung "NOMINAL" dan "TRANSFER"
         filtered_amounts = [
