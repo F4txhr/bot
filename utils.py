@@ -29,6 +29,23 @@ r = redis.from_url(REDIS_URL, decode_responses=True)
 TRUST_MIN = 0
 TRUST_MAX = 100
 
+# --- Konfigurasi dinamis (misalnya payment on/off) ---
+
+def is_payment_enabled() -> bool:
+    """
+    Mengecek apakah sistem pembayaran aktif.
+    Secara default dianggap aktif jika belum pernah di-set.
+    """
+    val = r.get("config:payment_enabled")
+    if val is None:
+        return True
+    return val == "1"
+
+
+def set_payment_enabled(enabled: bool) -> None:
+    """Mengaktifkan / menonaktifkan sistem pembayaran."""
+    r.set("config:payment_enabled", "1" if enabled else "0")
+
 # Maksimal pemakaian kode diskon per user untuk setiap kode
 MAX_DISCOUNT_PER_USER = 3
 

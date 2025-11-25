@@ -63,6 +63,8 @@ from utils import (
     get_payment_history,
     create_discount_code,
     generate_payment_code,
+    is_payment_enabled,
+    set_payment_enabled,
     r,
 )
 
@@ -372,51 +374,52 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Help untuk admin
     if lang == "en":
         text = (
-            "🛠 *Admin command list*\n\n"
-            "For all users:\n"
-            "• `/start`, `/help`, `/lang`\n"
-            "• `/search`, `/search_gender`, `/stop`, `/next`\n"
-            "• `/setgender`, `/stats`, `/premium`\n"
-            "• `/showid`, `/report`, `/appeal`, `/paymanual`, `/discount`\n\n"
-            "Admin only:\n"
-            "• `/ping` — Simple health check (bot & Redis).\n"
-            "• `/grant_premium <user_id> <days>` — Grant premium manually.\n"
-            "• `/giftpremium <user_count> <days>` — Randomly gift premium to active free users.\n"
-            "• `/broadcast <message>` — Send announcement to active users.\n"
-            "• `/adminstats` — Global stats (users, sessions, queue, premium, banned).\n"
-            "• `/list_banned` — List banned users.\n"
-            "• `/unban <user_id>` — Unban a user.\n\n"
-            "Discount & payments:\n"
-            "• `/creatediscount <code> <percent> <max_uses> <valid_hours> <min_amount>` — Create discount code.\n"
-            "• `/discountstats` — Show all discount codes and their usage.\n"
-            "• `/discountusers <code>` — List users who used a specific discount code.\n"
-            "• `/cleardiscount <code>` — Disable a discount code.\n"
-            "• `/payhistory <user_id> [limit]` — Show payment history for a user.\n"
+            "🛠 *Admin command list*\\n\\n"
+            "For all users:\\n"
+            "• `/start`, `/help`, `/lang`\\n"
+            "• `/search`, `/search_gender`, `/stop`, `/next`\\n"
+            "• `/setgender`, `/stats`, `/premium`\\n"
+            "• `/showid`, `/report`, `/appeal`, `/paymanual`, `/discount`\\n\\n"
+            "Admin only:\\n"
+            "• `/ping` — Simple health check (bot & Redis).\\n"
+            "• `/grant_premium <user_id> <days>` — Grant premium manually.\\n"
+            "• `/giftpremium <user_count> <days>` — Randomly gift premium to active free users.\\n"
+            "• `/broadcast <message>` — Send announcement to active users.\\n"
+            "• `/adminstats` — Global stats (users, sessions, queue, premium, banned).\\n"
+            "• `/list_banned` — List banned users.\\n"
+            "• `/unban <user_id>` — Unban a user.\\n\\n"
+            "Discount & payments:\\n"
+            "• `/payment on|off` — Enable or disable payment-related commands.\\n"
+            "• `/creatediscount <code> <percent> <max_uses> <valid_hours> <min_amount>` — Create discount code.\\n"
+            "• `/discountstats` — Show all discount codes and their usage.\\n"
+            "• `/discountusers <code>` — List users who used a specific discount code.\\n"
+            "• `/cleardiscount <code>` — Disable a discount code.\\n"
+            "• `/payhistory <user_id> [limit]` — Show payment history for a user.\\n"
         )
     else:
         text = (
-            "🛠 *Daftar perintah admin*\n\n"
-            "Untuk semua pengguna:\n"
-            "• `/start`, `/help`, `/lang`\n"
-            "• `/search`, `/search_gender`, `/stop`, `/next`\n"
-            "• `/setgender`, `/stats`, `/premium`\n"
-            "• `/showid`, `/report`, `/appeal`, `/paymanual`, `/discount`\n\n"
-            "Khusus admin:\n"
-            "• `/ping` — Cek cepat apakah bot & Redis berjalan.\n"
-            "• `/grant_premium <user_id> <days>` — Beri premium secara manual.\n"
-            "• `/giftpremium <jumlah_user> <days>` — Bagi-bagi premium ke user gratis yang aktif.\n"
-            "• `/broadcast <pesan>` — Kirim pengumuman ke user aktif.\n"
-            "• `/adminstats` — Statistik global (user, sesi, antrian, premium, banned).\n"
-            "• `/list_banned` — Daftar user yang diblokir.\n"
-            "• `/unban <user_id>` — Buka blokir user.\n\n"
-            "Diskon & pembayaran:\n"
-            "• `/creatediscount <kode> <persen> <max_uses> <valid_hours> <min_amount>` — Buat kode diskon.\n"
-            "• `/discountstats` — Lihat semua kode diskon dan pemakaiannya.\n"
-            "• `/discountusers <kode>` — Lihat siapa saja yang pernah memakai kode tertentu.\n"
-            "• `/cleardiscount <kode>` — Menonaktifkan (disable) sebuah kode diskon.\n"
-            "• `/payhistory <user_id> [limit]` — Lihat riwayat pembayaran user.\n"
+            "🛠 *Daftar perintah admin*\\n\\n"
+            "Untuk semua pengguna:\\n"
+            "• `/start`, `/help`, `/lang`\\n"
+            "• `/search`, `/search_gender`, `/stop`, `/next`\\n"
+            "• `/setgender`, `/stats`, `/premium`\\n"
+            "• `/showid`, `/report`, `/appeal`, `/paymanual`, `/discount`\\n\\n"
+            "Khusus admin:\\n"
+            "• `/ping` — Cek cepat apakah bot & Redis berjalan.\\n"
+            "• `/grant_premium <user_id> <days>` — Beri premium secara manual.\\n"
+            "• `/giftpremium <jumlah_user> <days>` — Bagi-bagi premium ke user gratis yang aktif.\\n"
+            "• `/broadcast <pesan>` — Kirim pengumuman ke user aktif.\\n"
+            "• `/adminstats` — Statistik global (user, sesi, antrian, premium, banned).\\n"
+            "• `/list_banned` — Daftar user yang diblokir.\\n"
+            "• `/unban <user_id>` — Buka blokir user.\\n\\n"
+            "Diskon & pembayaran:\\n"
+            "• `/payment on|off` — Menyalakan atau mematikan fitur pembayaran dari bot.\\n"
+            "• `/creatediscount <kode> <persen> <max_uses> <valid_hours> <min_amount>` — Buat kode diskon.\\n"
+            "• `/discountstats` — Lihat semua kode diskon dan pemakaiannya.\\n"
+            "• `/discountusers <kode>` — Lihat siapa saja yang pernah memakai kode tertentu.\\n"
+            "• `/cleardiscount <kode>` — Menonaktifkan (disable) sebuah kode diskon.\\n"
+            "• `/payhistory <user_id> [limit]` — Lihat riwayat pembayaran user.\\n"
         )
-    await update.message.reply_text(text, parse_mode="Markdown")
 
 async def premium_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -428,6 +431,21 @@ async def premium_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = "❌ Your account is blocked. Use /appeal to request a review."
         else:
             text = "❌ Akunmu diblokir. Gunakan /appeal untuk mengajukan banding."
+        await update.message.reply_text(text)
+        return
+
+    # Jika sistem pembayaran dinonaktifkan oleh admin, tampilkan pesan sederhana.
+    if not is_payment_enabled():
+        if lang == "en":
+            text = (
+                "⚠️ Premium purchase is currently unavailable.\n"
+                "Please contact the admin if you have any questions."
+            )
+        else:
+            text = (
+                "⚠️ Fitur pembelian premium untuk sementara tidak tersedia.\n"
+                "Silakan hubungi admin jika kamu punya pertanyaan."
+            )
         await update.message.reply_text(text)
         return
 
@@ -599,6 +617,21 @@ async def payment_trakteer_callback(update: Update, context: ContextTypes.DEFAUL
     lang = get_user_language(user_id)
     update_user_activity(user_id)
 
+    # Jika sistem pembayaran dimatikan, jangan tampilkan instruksi pembayaran baru.
+    if not is_payment_enabled():
+        if lang == "en":
+            text = (
+                "⚠️ Payment feature is temporarily disabled.\n"
+                "Please contact the admin for more information."
+            )
+        else:
+            text = (
+                "⚠️ Fitur pembayaran sedang dinonaktifkan sementara.\n"
+                "Silakan hubungi admin untuk informasi lebih lanjut."
+            )
+        await context.bot.send_message(chat_id=user_id, text=text)
+        return
+
     unique_code = f"SC{user_id}-{generate_payment_code()[:4]}"
 
     if lang == "en":
@@ -669,6 +702,21 @@ async def payment_manual_callback(update: Update, context: ContextTypes.DEFAULT_
     user_id = query.from_user.id
     lang = get_user_language(user_id)
 
+    # Jika sistem pembayaran dimatikan, jangan tampilkan instruksi pembayaran baru.
+    if not is_payment_enabled():
+        if lang == "en":
+            text = (
+                "⚠️ Payment feature is temporarily disabled.\n"
+                "Please contact the admin for more information."
+            )
+        else:
+            text = (
+                "⚠️ Fitur pembayaran sedang dinonaktifkan sementara.\n"
+                "Silakan hubungi admin untuk informasi lebih lanjut."
+            )
+        await query.edit_message_text(text)
+        return
+
     if lang == "en":
         text = """
 📱 **Manual transfer**
@@ -718,6 +766,21 @@ async def payment_duration_callback(update: Update, context: ContextTypes.DEFAUL
 
     user_id = query.from_user.id
     lang = get_user_language(user_id)
+
+    # Jika sistem pembayaran dimatikan, jangan buat kode pembayaran baru.
+    if not is_payment_enabled():
+        if lang == "en":
+            text = (
+                "⚠️ Payment feature is temporarily disabled.\n"
+                "Please contact the admin for more information."
+            )
+        else:
+            text = (
+                "⚠️ Fitur pembayaran sedang dinonaktifkan sementara.\n"
+                "Silakan hubungi admin untuk informasi lebih lanjut."
+            )
+        await query.edit_message_text(text)
+        return
 
     days = int(query.data.split("_")[1])
     base_amount = PREMIUM_PRICES[days]
@@ -2953,6 +3016,80 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
+async def payment_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mengaktifkan / menonaktifkan sistem pembayaran (admin only).
+
+    Contoh:
+    /payment on
+    /payment off
+    """
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        return
+
+    lang = get_user_language(user_id)
+
+    current_enabled = is_payment_enabled()
+
+    # Tanpa argumen: tampilkan status saat ini dan cara pakai
+    if not context.args:
+        if lang == "en":
+            status = "ON" if current_enabled else "OFF"
+            text = (
+                f"ℹ️ Current payment system status: *{status}*.\n\n"
+                "Usage: `/payment on` or `/payment off`."
+            )
+        else:
+            status = "AKTIF" if current_enabled else "NONAKTIF"
+            text = (
+                f"ℹ️ Status sistem pembayaran saat ini: *{status}*.\n\n"
+                "Cara pakai: `/payment on` atau `/payment off`."
+            )
+        await update.message.reply_text(text, parse_mode="Markdown")
+        return
+
+    choice = context.args[0].lower()
+    desired: bool | None = None
+    if choice in ["on", "enable", "enabled", "1"]:
+        desired = True
+    elif choice in ["off", "disable", "disabled", "0"]:
+        desired = False
+    else:
+        if lang == "en":
+            text = "Usage: /payment on | off"
+        else:
+            text = "Cara pakai: /payment on | off"
+        await update.message.reply_text(text)
+        return
+
+    set_payment_enabled(desired)
+
+    if lang == "en":
+        if desired:
+            text = (
+                "✅ Payment system is now *ON*.\n"
+                "/premium and payment flows are enabled again."
+            )
+        else:
+            text = (
+                "✅ Payment system is now *OFF*.\n"
+                "/premium will show that premium purchase is temporarily unavailable."
+            )
+    else:
+        if desired:
+            text = (
+                "✅ Sistem pembayaran sekarang *AKTIF*.\n"
+                "/premium dan alur pembayaran kembali bisa digunakan."
+            )
+        else:
+            text = (
+                "✅ Sistem pembayaran sekarang *NONAKTIF*.\n"
+                "/premium akan menampilkan bahwa pembelian premium sementara tidak tersedia."
+            )
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
 async def discount_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Menampilkan ringkasan semua kode diskon (admin only)."""
     if update.effective_user.id not in ADMIN_IDS:
@@ -3525,6 +3662,7 @@ def main():
     
     # Admin commands
     application.add_handler(CommandHandler("ping", ping))
+    application.add_handler(CommandHandler("payment", payment_toggle))
     application.add_handler(CommandHandler("grant_premium", grant_premium))
     application.add_handler(CommandHandler("giftpremium", gift_premium))
     application.add_handler(CommandHandler("broadcast", broadcast))
