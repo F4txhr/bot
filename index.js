@@ -9,6 +9,12 @@ const {
   removeFromQueue,
   popFromQueueExcept,
   pushToQueue,
+  isBanned,
+  banUser,
+  addReport,
+  getUserLang,
+  setUserLang,
+  isPremium,
 } = require("./db");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -18,10 +24,22 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
+const AUTO_BAN_REPORTS = 3;
+
 const bot = new Bot(BOT_TOKEN);
 
 async function startSearch(ctx) {
   const userId = ctx.from.id;
+
+  if (await isBanned(userId)) {
+    const lang = await getUserLang(userId);
+    const msg =
+      lang === "en"
+        ? "❌ Your account is blocked."
+        : "❌ Akunmu diblokir.";
+    await ctx.reply(msg);
+    return;
+  }
 
   const partnerIdExisting = await getPartner(userId);
   if (partnerIdExisting) {
@@ -69,26 +87,169 @@ async function stopChat(ctx) {
   }
 }
 
+async function handleReport(ctx) {
+  const userId = ctx.from.id;
+  const partnerId = await getPartner(userId);
+
+  const lang = await getUserLang(userId);
+
+  if (!partnerId) {
+    const msg =
+      lang === "en"
+        ? "ℹ️ You are not currently in a chat, so there is no one to report."
+        : "ℹ️ Kamu tidak sedang dalam obrolan, tidak ada yang bisa dilaporkan.";
+    await ctx.reply(msg);
+    return;
+  }
+
+  const total = await addReport(partnerId, userId, 24);
+
+  const msgUser =
+    lang === "en"
+      ? "✅ Your report has been recorded. Thank you for helping keep the community safe."
+      : "✅ Laporanmu sudah direkam. Terima kasih sudah membantu menjaga komunitas.";
+
+  await ctx.reply(msgUser);
+
+  if (total >= AUTO_BAN_REPORTS) {
+    await banUser(partnerId, "Auto-ban by reports");
+    try {
+      await bot.api.sendMessage(
+        partnerId,
+        "❌ Akunmu diblokir karena terlalu banyak laporan dari pengguna lain."
+      );
+    } catch (_) {}
+    await clearPair(userId);
+  }
+}
+
+async function handleLang(ctx) {
+  const userId = ctx.from.id;
+  const args = ctx.match ? ctx.match.trim().split(/\s+/) : [];
+
+  const currentLang = await getUserLang(userId);
+
+  if (args.length > 0) {
+    const arg = args[0].toLowerCase();
+    if (["id", "indo", "indonesia"].includes(arg)) {
+      await setUserLang(userId, "id");
+      await ctx.reply("✅ Bahasa telah diubah ke Bahasa Indonesia.");
+      return;
+    }
+    if (["en", "eng", "english"].includes(arg)) {
+      await setUserLang(userId, "en");
+      await ctx.reply("✅ Language has been set to English.");
+      return;
+    }
+
+    const msg =
+      currentLang === "en"
+        ? "Usage: /lang id | en"
+        : "Cara pakai: /lang id | en";
+    await ctx.reply(msg);
+    return;
+  }
+
+  const text =
+    currentLang === "en"
+      ? "Choose language: /lang id atau /lang en"
+      : "Pilih bahasa: /lang id atau /lang en";
+  await ctx.reply(text);
+}
+
+async function handleShowId(ctx) {
+  const userId = ctx.from.id;
+  const partnerId = await getPartner(userId);
+  const lang = await getUserLang(userId);
+
+  if (!partnerId) {
+    const msg =
+      lang === "en"
+        ? "ℹ️ You are not in a chat right now. Use /search first."
+        : "ℹ️ Kamu tidak sedang dalam obrolan. Gunakan /search terlebih dahulu.";
+    await ctx.reply(msg);
+    return;
+  }
+
+  const text =
+    lang === "en"
+      ? `🔗 Your profile link has been sent to your partner.`
+      : `🔗 Link profilmu telah dikirim ke pasanganmu.`;
+  await ctx.reply(text);
+
+  const partnerText =
+    lang === "en"
+      ? `🔗 Your chat partner has shared their profile:\nhttps://t.me/${ctx.from.username || `+user?id=${userId}`}`
+      : `🔗 Pasanganmu membagikan profilnya:\nhttps://t.me/${ctx.from.username || `+user?id=${userId}`}`;
+
+  try {
+    await bot.api.sendMessage(partnerId, partnerText);
+  } catch (err) {
+    console.error("Gagal kirim showid ke partner:", err.message);
+  }
+}
+
+async function handlePremium(ctx) {
+  const userId = ctx.from.id;
+  const lang = await getUserLang(userId);
+  const premium = await isPremium(userId);
+
+  if (lang === "en") {
+    const text = premium
+      ? "💎 You are currently a *premium* user.\n(Feature details can be added here later.)"
+      : "💎 Premium user feature (placeholder).\nYou are currently *not* premium.\n(Activation/payment logic can be added later.)";
+    await ctx.reply(text, { parse_mode: "Markdown" });
+  } else {
+    const text = premium
+      ? "💎 Kamu saat ini adalah pengguna *premium*.\n(Detail fitur bisa ditambahkan nanti.)"
+      : "💎 Fitur pengguna premium (placeholder).\nSaat ini kamu *belum* premium.\n(Logika aktivasi/pembayaran bisa ditambahkan nanti.)";
+    await ctx.reply(text, { parse_mode: "Markdown" });
+  }
+}
+
 async function main() {
   await initDb();
-  console.log("✅ Database siap digunakan");
+  console.log("✅ Koneksi Supabase siap digunakan");
 
   bot.command("start", async (ctx) => {
     const name = ctx.from.first_name || "kamu";
-    const text = [
+    const lang = await getUserLang(ctx.from.id);
+
+    const textId = [
       `👋 Hai, ${name}!`,
       "",
-      "Selamat datang di *ShadowChat* (versi NodeJS, DB).",
+      "Selamat datang di *ShadowChat* (NodeJS + Supabase).",
       "",
       "Perintah utama:",
       "• /search — cari pasangan ngobrol anonim",
       "• /stop — hentikan obrolan yang sedang berjalan",
       "• /next — ganti ke pasangan berikutnya",
+      "• /report — laporkan pasangan yang melanggar",
+      "• /lang — ganti bahasa (id/en)",
+      "• /showid — kirim link profilmu ke pasangan",
       "",
       "Coba kirim /search untuk mulai.",
     ].join("\n");
 
-    await ctx.reply(text, { parse_mode: "Markdown" });
+    const textEn = [
+      `👋 Hey, ${name}!`,
+      "",
+      "Welcome to *ShadowChat* (NodeJS + Supabase).",
+      "",
+      "Main commands:",
+      "• /search — find a random chat partner",
+      "• /stop — end current chat",
+      "• /next — find the next partner",
+      "• /report — report your current partner",
+      "• /lang — change language (id/en)",
+      "• /showid — share your profile link with partner",
+      "",
+      "Type /search to start.",
+    ].join("\n");
+
+    await ctx.reply(lang === "en" ? textEn : textId, {
+      parse_mode: "Markdown",
+    });
   });
 
   bot.command("search", async (ctx) => {
@@ -104,10 +265,37 @@ async function main() {
     await startSearch(ctx);
   });
 
+  bot.command("report", async (ctx) => {
+    await handleReport(ctx);
+  });
+
+  bot.command("lang", async (ctx) => {
+    await handleLang(ctx);
+  });
+
+  bot.command("showid", async (ctx) => {
+    await handleShowId(ctx);
+  });
+
+  bot.command("premium", async (ctx) => {
+    await handlePremium(ctx);
+  });
+
   bot.on("message", async (ctx) => {
     if (ctx.message.text && ctx.message.text.startsWith("/")) return;
 
     const userId = ctx.from.id;
+
+    if (await isBanned(userId)) {
+      const lang = await getUserLang(userId);
+      const msg =
+        lang === "en"
+          ? "❌ Your account is blocked."
+          : "❌ Akunmu diblokir.";
+      await ctx.reply(msg);
+      return;
+    }
+
     const partnerId = await getPartner(userId);
 
     if (!partnerId) {
@@ -147,7 +335,7 @@ async function main() {
   });
 
   bot.start();
-  console.log("🤖 Bot Telegram berjalan (NodeJS + grammY + MySQL)");
+  console.log("🤖 Bot Telegram berjalan (NodeJS + grammY + Supabase)");
 }
 
 main().catch((err) => {
