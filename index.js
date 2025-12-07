@@ -1,62 +1,39 @@
 const { Bot } = require("grammy");
-const { createClient } = require("redis");
 require("dotenv").config();
 
+const {
+  initDb,
+  getPartner,
+  setPair,
+  clearPair,
+  removeFromQueue,
+  popFromQueueExcept,
+  pushToQueue,
+} = require("./db");
+
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const REDIS_URL = process.env.REDIS_URL;
 
 if (!BOT_TOKEN) {
   console.error("BOT_TOKEN belum diset di environment / .env");
   process.exit(1);
 }
-if (!REDIS_URL) {
-  console.error("REDIS_URL belum diset di environment / .env");
-  process.exit(1);
-}
 
 const bot = new Bot(BOT_TOKEN);
-
-const redis = createClient({
-  url: REDIS_URL,
-});
-redis.on("error", (err) => console.error("Redis error:", err));
-
-async function getPartner(userId) {
-  return await redis.get(`partner:${userId}`);
-}
-
-async function setPair(userA, userB) {
-  await redis.set(`partner:${userA}`, String(userB));
-  await redis.set(`partner:${userB}`, String(userA));
-}
-
-async function clearPair(userId) {
-  const partnerId = await getPartner(userId);
-  if (!partnerId) return null;
-  await redis.del(`partner:${userId}`, `partner:${partnerId}`);
-  return Number(partnerId);
-}
-
-async function removeFromQueue(userId) {
-  await redis.lRem("queue:free", 0, String(userId));
-}
 
 async function startSearch(ctx) {
   const userId = ctx.from.id;
 
-  const hasPartner = await getPartner(userId);
-  if (hasPartner) {
+  const partnerIdExisting = await getPartner(userId);
+  if (partnerIdExisting) {
     await ctx.reply("ℹ️ Kamu sudah dalam obrolan. Gunakan /stop untuk keluar.");
     return;
   }
 
   await removeFromQueue(userId);
 
-  const otherIdStr = await redis.lPop("queue:free");
+  const otherId = await popFromQueueExcept(userId);
 
-  if (otherIdStr && otherIdStr !== String(userId)) {
-    const otherId = Number(otherIdStr);
-
+  if (otherId && otherId !== userId) {
     await setPair(userId, otherId);
 
     await ctx.reply("✅ Ditemukan pasangan! Mulai ngobrol sekarang.");
@@ -65,9 +42,7 @@ async function startSearch(ctx) {
       "✅ Ditemukan pasangan! Mulai ngobrol sekarang."
     );
   } else {
-    if (!otherIdStr) {
-      await redis.rPush("queue:free", String(userId));
-    }
+    await pushToQueue(userId);
     await ctx.reply("🔍 Kamu masuk antrian, menunggu pasangan...");
   }
 }
@@ -77,14 +52,11 @@ async function stopChat(ctx) {
 
   await removeFromQueue(userId);
 
-  const partnerIdStr = await getPartner(userId);
-  if (!partnerIdStr) {
+  const partnerId = await clearPair(userId);
+  if (!partnerId) {
     await ctx.reply("ℹ️ Kamu tidak sedang dalam obrolan.");
     return;
   }
-
-  const partnerId = Number(partnerIdStr);
-  await clearPair(userId);
 
   await ctx.reply("⛔ Kamu telah keluar dari obrolan.");
   try {
@@ -98,15 +70,15 @@ async function stopChat(ctx) {
 }
 
 async function main() {
-  await redis.connect();
-  console.log("✅ Terhubung ke Redis");
+  await initDb();
+  console.log("✅ Database siap digunakan");
 
   bot.command("start", async (ctx) => {
     const name = ctx.from.first_name || "kamu";
     const text = [
       `👋 Hai, ${name}!`,
       "",
-      "Selamat datang di *ShadowChat* (versi NodeJS).",
+      "Selamat datang di *ShadowChat* (versi NodeJS, DB).",
       "",
       "Perintah utama:",
       "• /search — cari pasangan ngobrol anonim",
@@ -136,14 +108,13 @@ async function main() {
     if (ctx.message.text && ctx.message.text.startsWith("/")) return;
 
     const userId = ctx.from.id;
-    const partnerIdStr = await getPartner(userId);
+    const partnerId = await getPartner(userId);
 
-    if (!partnerIdStr) {
+    if (!partnerId) {
       await ctx.reply("Kamu belum punya pasangan. Gunakan /search untuk mencari.");
       return;
     }
 
-    const partnerId = Number(partnerIdStr);
     const msg = ctx.message;
 
     try {
@@ -176,7 +147,7 @@ async function main() {
   });
 
   bot.start();
-  console.log("🤖 Bot Telegram berjalan (NodeJS + grammY)");
+  console.log("🤖 Bot Telegram berjalan (NodeJS + grammY + MySQL)");
 }
 
 main().catch((err) => {
