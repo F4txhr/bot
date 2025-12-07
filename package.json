@@ -1,0 +1,14 @@
+{
+  "name": "shadowchat-node",
+  "version": "1.0.0",
+  "description": "ShadowChat anonymous Telegram bot - Node.js version for Pterodactyl",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "grammy": "^1.38.4",
+    "redis": "^5.10.0",
+    "dotenv": "^16.4.0"
+  }
+}
