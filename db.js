@@ -2,10 +2,10 @@ const fs = require("fs");
 const path = require("path");
 require("dotenv").config();
 
-// Lokasi file database JSON. Jika DB_PATH tidak diset,
-// default ke file "shadowchat.json" di direktori yang sama dengan script.
-const dbPath =
-  process.env.DB_PATH || path.join(__dirname, "shadowchat.json");
+// Lokasi file database. Jika DB_PATH tidak diset,
+// default ke file "shadowchat.db" di direktori yang sama dengan script.
+// Isinya tetap format JSON, hanya ekstensi filenya saja yang .db.
+const dbPath = process.env.DB_PATH || path.join(__dirname, "shadowchat.db");
 
 // State di memori:
 // {
