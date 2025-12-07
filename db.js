@@ -1,113 +1,124 @@
+const fs = require("fs");
 const path = require("path");
-const Database = require("better-sqlite3");
 require("dotenv").config();
 
-// Lokasi file database. Jika DB_PATH tidak diset,
-// default ke file "shadowchat.db" di direktori yang sama dengan script.
+// Lokasi file database JSON. Jika DB_PATH tidak diset,
+// default ke file "shadowchat.json" di direktori yang sama dengan script.
 const dbPath =
-  process.env.DB_PATH || path.join(__dirname, "shadowchat.db");
+  process.env.DB_PATH || path.join(__dirname, "shadowchat.json");
 
-// Akan otomatis membuat file jika belum ada.
-const db = new Database(dbPath);
+// State di memori:
+// {
+//   pairs: { [userId: string]: string }, // user -> partner
+//   queue: string[]                      // antrean userId
+// }
+let state = {
+  pairs: {},
+  queue: [],
+};
+
+function loadState() {
+  try {
+    if (!fs.existsSync(dbPath)) {
+      return;
+    }
+    const raw = fs.readFileSync(dbPath, "utf8");
+    const data = JSON.parse(raw);
+    if (data && typeof data === "object") {
+      if (data.pairs && typeof data.pairs === "object") {
+        state.pairs = data.pairs;
+      }
+      if (Array.isArray(data.queue)) {
+        state.queue = data.queue.map((x) => String(x));
+      }
+    }
+  } catch (err) {
+    console.error("Gagal membaca file DB, gunakan state kosong:", err.message);
+    state = { pairs: {}, queue: [] };
+  }
+}
+
+function saveState() {
+  try {
+    const tmpPath = dbPath + ".tmp";
+    fs.writeFileSync(tmpPath, JSON.stringify(state));
+    fs.renameSync(tmpPath, dbPath);
+  } catch (err) {
+    console.error("Gagal menyimpan file DB:", err.message);
+  }
+}
 
 /**
- * Inisialisasi schema minimal:
- * - pairs: menyimpan pasangan user (1 baris per user, simetris)
- * - queue_free: antrean user yang menunggu pasangan
+ * Inisialisasi "DB" berbasis file JSON.
+ * Akan membuat file baru jika belum ada.
  */
 async function initDb() {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS pairs (
-      user_id INTEGER PRIMARY KEY,
-      partner_id INTEGER NOT NULL,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-  `);
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS queue_free (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL UNIQUE,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-  `);
-
-  console.log("SQLite DB inisialisasi di", dbPath);
+  loadState();
+  console.log("JSON DB inisialisasi di", dbPath);
 }
 
 async function getPartner(userId) {
-  const row = db
-    .prepare("SELECT partner_id FROM pairs WHERE user_id = ? LIMIT 1")
-    .get(userId);
-  if (!row) return null;
-  return Number(row.partner_id);
+  const uid = String(userId);
+  const partner = state.pairs[uid];
+  if (!partner) return null;
+  return Number(partner);
 }
 
 async function setPair(userA, userB) {
-  const now = new Date().toISOString();
-  const stmt = db.prepare(`
-    INSERT INTO pairs (user_id, partner_id, created_at)
-    VALUES (@user_id, @partner_id, @created_at)
-    ON CONFLICT(user_id) DO UPDATE SET
-      partner_id = excluded.partner_id,
-      created_at = excluded.created_at
-  `);
+  const a = String(userA);
+  const b = String(userB);
 
-  const tx = db.transaction((a, b) => {
-    stmt.run({ user_id: a, partner_id: b, created_at: now });
-    stmt.run({ user_id: b, partner_id: a, created_at: now });
-  });
+  state.pairs[a] = b;
+  state.pairs[b] = a;
 
-  tx(userA, userB);
+  // Pastikan mereka keluar dari antrean
+  state.queue = state.queue.filter((id) => id !== a && id !== b);
+
+  saveState();
 }
 
 async function clearPair(userId) {
-  const partnerId = await getPartner(userId);
+  const uid = String(userId);
+  const partnerId = state.pairs[uid];
   if (!partnerId) return null;
-  db.prepare("DELETE FROM pairs WHERE user_id IN (?, ?)").run(
-    userId,
-    partnerId
-  );
-  return partnerId;
+
+  delete state.pairs[uid];
+  delete state.pairs[String(partnerId)];
+
+  saveState();
+  return Number(partnerId);
 }
 
 async function removeFromQueue(userId) {
-  db.prepare("DELETE FROM queue_free WHERE user_id = ?").run(userId);
+  const uid = String(userId);
+  const before = state.queue.length;
+  state.queue = state.queue.filter((id) => id !== uid);
+  if (state.queue.length !== before) {
+    saveState();
+  }
 }
 
 /**
- * Mengambil satu user dari antrean (bukan diri sendiri) secara atomik.
+ * Mengambil satu user dari antrean (bukan diri sendiri).
  */
 async function popFromQueueExcept(userId) {
-  const tx = db.transaction((uid) => {
-    const row = db
-      .prepare(
-        `
-        SELECT id, user_id
-        FROM queue_free
-        WHERE user_id <> ?
-        ORDER BY created_at ASC
-        LIMIT 1
-      `
-      )
-      .get(uid);
+  const uid = String(userId);
+  const idx = state.queue.findIndex((id) => id !== uid);
+  if (idx === -1) return null;
 
-    if (!row) return null;
+  const otherId = state.queue[idx];
+  state.queue.splice(idx, 1);
 
-    db.prepare("DELETE FROM queue_free WHERE id = ?").run(row.id);
-    return Number(row.user_id);
-  });
-
-  return tx(userId);
+  saveState();
+  return Number(otherId);
 }
 
 async function pushToQueue(userId) {
-  db.prepare(
-    `
-    INSERT OR IGNORE INTO queue_free (user_id)
-    VALUES (?)
-  `
-  ).run(userId);
+  const uid = String(userId);
+  if (!state.queue.includes(uid)) {
+    state.queue.push(uid);
+    saveState();
+  }
 }
 
 module.exports = {
