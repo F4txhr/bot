@@ -144,6 +144,50 @@ function parseTransactionDatetime(ocrText) {
   }
 }
 
+// Deteksi jenis wallet dari teks OCR (DANA / GOPAY / OVO)
+function detectWallet(ocrText) {
+  const upper = ocrText.toUpperCase();
+  if (upper.includes("DANA")) return "DANA";
+  if (
+    upper.includes("GOPAY") ||
+    upper.includes("GO-PAY") ||
+    upper.includes("GOJEK")
+  ) {
+    return "GOPAY";
+  }
+  if (upper.includes("OVO")) return "OVO";
+  return "UNKNOWN";
+}
+
+// Parse penerima GoPay (nama + 4 digit terakhir akun)
+function parseGopayRecipient(ocrText) {
+  const lines = ocrText.split(/\r?\n/);
+  let name = null;
+  let last4 = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    const upper = line.toUpperCase();
+
+    // Nama penerima: baris "Ditransfer ke ..."
+    if (!name && upper.startsWith("DITRANSFER KE")) {
+      name = line.replace(/^[Dd]itransfer ke\s*/i, "").trim();
+    }
+
+    // GoPay ****1234
+    if (!last4) {
+      const m = upper.match(/GOPAY\s+\*{2,}\s?(\d{4})/);
+      if (m) {
+        last4 = m[1];
+      }
+    }
+
+    if (name && last4) break;
+  }
+
+  return { name, last4 };
+}
+
 function containsWalletInfo(ocrText) {
   const upper = ocrText.toUpperCase();
   const nameUpper = E_WALLET_NAME.toUpperCase();
@@ -763,25 +807,47 @@ async function main() {
         const ocrText = await ocrPhotoFromTelegram(ctx, photo);
         const amounts = extractAmountCandidates(ocrText);
         const maxAmount = amounts.length ? amounts[amounts.length - 1] : 0;
-        const hasWalletInfo = containsWalletInfo(ocrText);
         const codes = findPaymentCodes(ocrText);
         const txDate = parseTransactionDatetime(ocrText);
+        const walletType = detectWallet(ocrText);
         const now = new Date();
         const diffHours =
           txDate != null
             ? Math.abs(now.getTime() - txDate.getTime()) / 3600000
             : null;
 
-        let days = computePremiumDaysFromAmount(maxAmount);
-
-        // Aturan auto-approve: wallet cocok + nominal valid + tanggal <= 24 jam
-        let status = "pending";
         const within24h =
           diffHours != null && Number.isFinite(diffHours) && diffHours <= 24;
 
-        if (hasWalletInfo && days > 0 && within24h) {
-          status = "approved";
-          await extendPremium(userId, days);
+        let days = computePremiumDaysFromAmount(maxAmount);
+        let status = "pending";
+
+        // Verifikasi berbeda untuk DANA vs GoPay
+        if (days > 0 && within24h) {
+          if (walletType === "GOPAY") {
+            const { name, last4 } = parseGopayRecipient(ocrText);
+            const expectedLast4 = E_WALLET_NUMBER.slice(-4);
+            const norm = (s) =>
+              (s || "")
+                .toUpperCase()
+                .replace(/\s+/g, " ")
+                .trim();
+            const nameOk =
+              name && norm(name).includes(norm(E_WALLET_NAME));
+            const last4Ok = last4 === expectedLast4;
+
+            if (nameOk && last4Ok) {
+              status = "approved";
+              await extendPremium(userId, days);
+            }
+          } else {
+            // Default: gunakan verifikasi nomor+nama seperti DANA
+            const hasWalletInfo = containsWalletInfo(ocrText);
+            if (hasWalletInfo) {
+              status = "approved";
+              await extendPremium(userId, days);
+            }
+          }
         }
 
         await logPayment({
@@ -790,7 +856,7 @@ async function main() {
           amount: maxAmount || 0,
           days: days || 0,
           status,
-          wallet: `${E_WALLET_NAME} ${E_WALLET_NUMBER}`,
+          wallet: `${walletType} | ${E_WALLET_NAME} ${E_WALLET_NUMBER}`,
           ocrText,
           code: codes.length ? codes[0] : "",
           txDatetime: txDate ? txDate.toISOString() : null,
@@ -803,11 +869,12 @@ async function main() {
             "",
             `User ID: \`${userId}\``,
             `Status: ${status.toUpperCase()}`,
+            `Jenis wallet OCR: ${walletType}`,
             `Nominal OCR: Rp ${
               maxAmount ? maxAmount.toLocaleString("id-ID") : 0
             }`,
             `Hari premium: ${days}`,
-            `Wallet (target seharusnya): ${E_WALLET_NAME} (${E_WALLET_NUMBER})`,
+            `Wallet target: ${E_WALLET_NAME} (${E_WALLET_NUMBER})`,
             `Kode pembayaran OCR: ${codes.length ? codes.join(", ") : "-"}`,
             `Tanggal transaksi OCR: ${
               txDate ? txDate.toISOString() : "tidak terbaca"
