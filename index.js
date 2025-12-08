@@ -1,4 +1,4 @@
-const { Bot } = require("grammy");
+const { Bot, InlineKeyboard } = require("grammy");
 require("dotenv").config();
 
 const {
@@ -29,6 +29,7 @@ const ADMIN_IDS = (process.env.ADMIN_IDS || "")
   .filter(Boolean)
   .map((x) => Number(x))
   .filter((x) => !Number.isNaN(x));
+const TRAKTEER_URL = process.env.TRAKTEER_URL || "";
 
 if (!BOT_TOKEN) {
   console.error("BOT_TOKEN belum diset di environment / .env");
@@ -217,7 +218,6 @@ async function handlePremium(ctx) {
   if (trakteerEnabled) methods.push("trakteer");
 
   if (methods.length === 0) {
-    // Tidak ada metode pembayaran yang aktif
     if (lang === "en") {
       const text = premium
         ? "💎 You are currently a *premium* user.\n\nPayment methods are currently unavailable."
@@ -232,45 +232,36 @@ async function handlePremium(ctx) {
     return;
   }
 
+  let text;
   if (lang === "en") {
-    const lines = [];
-    if (premium) {
-      lines.push("💎 You are currently a *premium* user.");
-      lines.push("");
-    } else {
-      lines.push("💎 You are currently *not* premium.");
-      lines.push("");
-    }
-    lines.push("Available payment methods:");
-
-    if (manualEnabled) {
-      lines.push("• Manual transfer (DANA/OVO/GoPay) — use /paymanual (coming soon)");
-    }
-    if (trakteerEnabled) {
-      lines.push("• Trakteer — support via Trakteer (coming soon)");
-    }
-
-    await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
+    text = premium
+      ? "💎 You are currently a *premium* user.\n\nChoose a payment method below to extend your premium:"
+      : "💎 You are currently *not* premium.\n\nChoose a payment method below to activate premium:";
   } else {
-    const lines = [];
-    if (premium) {
-      lines.push("💎 Kamu saat ini adalah pengguna *premium*.");
-      lines.push("");
-    } else {
-      lines.push("💎 Kamu saat ini *belum* premium.");
-      lines.push("");
-    }
-    lines.push("Metode pembayaran yang tersedia:");
-
-    if (manualEnabled) {
-      lines.push("• Transfer manual (DANA/OVO/GoPay) — pakai /paymanual (segera)");
-    }
-    if (trakteerEnabled) {
-      lines.push("• Trakteer — dukung via Trakteer (segera)");
-    }
-
-    await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
+    text = premium
+      ? "💎 Kamu saat ini adalah pengguna *premium*.\n\nPilih metode pembayaran di bawah untuk memperpanjang premium:"
+      : "💎 Kamu saat ini *belum* premium.\n\nPilih metode pembayaran di bawah untuk mengaktifkan premium:";
   }
+
+  const keyboard = new InlineKeyboard();
+  if (manualEnabled) {
+    keyboard.text(
+      lang === "en" ? "📱 Manual transfer" : "📱 Transfer manual",
+      "pay_manual"
+    );
+  }
+  if (trakteerEnabled) {
+    if (manualEnabled) keyboard.row();
+    keyboard.text(
+      lang === "en" ? "💳 Trakteer" : "💳 Trakteer",
+      "pay_trakteer"
+    );
+  }
+
+  await ctx.reply(text, {
+    parse_mode: "Markdown",
+    reply_markup: keyboard,
+  });
 }
 
 async function main() {
@@ -349,6 +340,74 @@ async function main() {
 
   bot.command("premium", async (ctx) => {
     await handlePremium(ctx);
+  });
+
+  // Callback pembayaran manual/Trakteer
+  bot.callbackQuery("pay_manual", async (ctx) => {
+    const userId = ctx.from.id;
+    const lang = await getUserLang(userId);
+    const manualEnabled = await isPaymentEnabled("manual");
+    if (!manualEnabled) {
+      const msg =
+        lang === "en"
+          ? "⚠️ Manual payment is currently disabled."
+          : "⚠️ Pembayaran manual saat ini dimatikan.";
+      await ctx.answerCallbackQuery({ text: msg, show_alert: true });
+      return;
+    }
+
+    const textEn =
+      "📱 *Manual payment (DANA/OVO/GoPay)*\n\n" +
+      "Please send your transfer *screenshot* in this chat, and the admin will review it.\n" +
+      "If automatic checking fails, you can still use /paymanual to request a manual review.";
+    const textId =
+      "📱 *Pembayaran manual (DANA/OVO/GoPay)*\n\n" +
+      "Silakan kirim *screenshot bukti transfer* di chat ini, nanti admin akan meninjaunya.\n" +
+      "Jika pengecekan otomatis gagal, kamu tetap bisa gunakan /paymanual untuk meminta review manual dari admin.";
+
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(lang === "en" ? textEn : textId, {
+      parse_mode: "Markdown",
+    });
+  });
+
+  bot.callbackQuery("pay_trakteer", async (ctx) => {
+    const userId = ctx.from.id;
+    const lang = await getUserLang(userId);
+    const trakteerEnabled = await isPaymentEnabled("trakteer");
+    if (!trakteerEnabled) {
+      const msg =
+        lang === "en"
+          ? "⚠️ Trakteer payment is currently disabled."
+          : "⚠️ Pembayaran via Trakteer saat ini dimatikan.";
+      await ctx.answerCallbackQuery({ text: msg, show_alert: true });
+      return;
+    }
+
+    const textEn =
+      "💳 *Payment via Trakteer*\n\n" +
+      "Tap the button below to open the Trakteer page.\n" +
+      "Please mention your Telegram ID or username in the message so the admin can verify it.\n\n" +
+      "If automatic recognition is not implemented yet, the admin will manually extend your premium after checking.";
+    const textId =
+      "💳 *Pembayaran via Trakteer*\n\n" +
+      "Tap tombol di bawah untuk membuka halaman Trakteer.\n" +
+      "Mohon tulis ID atau username Telegram kamu di pesan dukungan agar admin mudah memverifikasi.\n\n" +
+      "Jika pengecekan otomatis belum tersedia, admin akan menambah premium kamu secara manual setelah dicek.";
+
+    const keyboard = new InlineKeyboard();
+    if (TRAKTEER_URL) {
+      keyboard.url(
+        lang === "en" ? "🔗 Open Trakteer page" : "🔗 Buka halaman Trakteer",
+        TRAKTEER_URL
+      );
+    }
+
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(lang === "en" ? textEn : textId, {
+      parse_mode: "Markdown",
+      reply_markup: TRAKTEER_URL ? keyboard : undefined,
+    });
   });
 
   bot.command("stats", async (ctx) => {
