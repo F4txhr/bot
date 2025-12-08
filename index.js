@@ -58,6 +58,16 @@ function isAdmin(userId) {
 
 // === Helper OCR & parsing pembayaran manual ===
 
+// Generator kode unik pembayaran, format: PAY-XXXXXXXX
+function generatePaymentCode() {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let raw = "";
+  for (let i = 0; i < 8; i++) {
+    raw += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return `PAY-${raw}`;
+}
+
 function extractAmountCandidates(text) {
   const candidates = new Set();
   const lines = text.split(/\r?\n/);
@@ -435,29 +445,55 @@ async function handlePremium(ctx) {
     return;
   }
 
+  const code = generatePaymentCode();
+
   let text;
   if (lang === "en") {
-    text = premium
-      ? "💎 You are currently a *premium* user.\n\nChoose a payment method below to extend your premium:"
-      : "💎 You are currently *not* premium.\n\nChoose a payment method below to activate premium:";
+    text = [
+      premium
+        ? "💎 You are currently a *premium* user."
+        : "💎 You are currently *not* premium.",
+      "",
+      "Each Rp 1.000 = 1 day of premium. Example:",
+      "• Rp 3.000 → 3 days",
+      "• Rp 10.000 → 10 days",
+      "",
+      "Use the *unique code* below in your payment note/message:",
+      "",
+      `\`${code}\``,
+      "",
+      "Then choose one of the payment methods below:",
+    ].join("\n");
   } else {
-    text = premium
-      ? "💎 Kamu saat ini adalah pengguna *premium*.\n\nPilih metode pembayaran di bawah untuk memperpanjang premium:"
-      : "💎 Kamu saat ini *belum* premium.\n\nPilih metode pembayaran di bawah untuk mengaktifkan premium:";
+    text = [
+      premium
+        ? "💎 Kamu saat ini adalah pengguna *premium*."
+        : "💎 Kamu saat ini *belum* premium.",
+      "",
+      "Setiap Rp 1.000 = 1 hari premium. Contoh:",
+      "• Rp 3.000 → 3 hari",
+      "• Rp 10.000 → 10 hari",
+      "",
+      "Gunakan *kode unik* di bawah ini pada catatan/pesan pembayaran:",
+      "",
+      `\`${code}\``,
+      "",
+      "Lalu pilih salah satu metode pembayaran di bawah:",
+    ].join("\n");
   }
 
   const keyboard = new InlineKeyboard();
   if (manualEnabled) {
     keyboard.text(
       lang === "en" ? "📱 Manual transfer" : "📱 Transfer manual",
-      "pay_manual"
+      `pay_manual:${code}`
     );
   }
   if (trakteerEnabled) {
     if (manualEnabled) keyboard.row();
     keyboard.text(
       lang === "en" ? "💳 Trakteer" : "💳 Trakteer",
-      "pay_trakteer"
+      `pay_trakteer:${code}`
     );
   }
 
@@ -546,7 +582,7 @@ async function main() {
   });
 
   // Callback pembayaran manual/Trakteer
-  bot.callbackQuery("pay_manual", async (ctx) => {
+  bot.callbackQuery(/^pay_manual:(.+)$/, async (ctx) => {
     const userId = ctx.from.id;
     const lang = await getUserLang(userId);
     const manualEnabled = await isPaymentEnabled("manual");
@@ -559,16 +595,24 @@ async function main() {
       return;
     }
 
+    const code = ctx.match[1];
+
     await setPaymentSession(userId, "manual");
 
     const textEn =
       "📱 *Manual payment (DANA/OVO/GoPay)*\n\n" +
-      "Please send your transfer *screenshot* in this chat now, and the admin will review it.\n" +
+      `Please transfer to *${E_WALLET_NAME}* (${E_WALLET_NUMBER}).\n` +
+      "Use the following *unique code* in your payment note/message:\n\n" +
+      `\`${code}\`\n\n` +
+      "Then send your transfer *screenshot* in this chat. The bot will try to verify it automatically.\n" +
       "While you are in this payment session, your messages will not be forwarded to any chat partner.\n\n" +
       "If automatic checking fails, you can still use /paymanual to request a manual review.";
     const textId =
       "📱 *Pembayaran manual (DANA/OVO/GoPay)*\n\n" +
-      "Silakan kirim *screenshot bukti transfer* di chat ini sekarang, nanti admin akan meninjaunya.\n" +
+      `Silakan transfer ke *${E_WALLET_NAME}* (${E_WALLET_NUMBER}).\n` +
+      "Gunakan *kode unik* berikut di catatan/pesan pembayaran kamu:\n\n" +
+      `\`${code}\`\n\n` +
+      "Setelah itu kirim *screenshot bukti transfer* di chat ini. Bot akan mencoba memverifikasi secara otomatis.\n" +
       "Selama kamu berada dalam sesi pembayaran ini, pesanmu tidak akan diteruskan ke pasangan chat.\n\n" +
       "Jika pengecekan otomatis gagal, kamu tetap bisa gunakan /paymanual untuk meminta review manual dari admin.";
 
@@ -578,7 +622,7 @@ async function main() {
     });
   });
 
-  bot.callbackQuery("pay_trakteer", async (ctx) => {
+  bot.callbackQuery(/^pay_trakteer:(.+)$/, async (ctx) => {
     const userId = ctx.from.id;
     const lang = await getUserLang(userId);
     const trakteerEnabled = await isPaymentEnabled("trakteer");
@@ -591,16 +635,22 @@ async function main() {
       return;
     }
 
+    const code = ctx.match[1];
+
     const textEn =
       "💳 *Payment via Trakteer*\n\n" +
       "Tap the button below to open the Trakteer page.\n" +
-      "Please mention your Telegram ID or username in the message so the admin can verify it.\n\n" +
-      "If automatic recognition is not implemented yet, the admin will manually extend your premium after checking.";
+      "Please mention your Telegram ID or username in the support message, and also include this *unique code*:\n\n" +
+      `\`${code}\`\n\n` +
+      "Each Rp 1.000 = 1 day of premium. Example: Rp 10.000 → 10 days.\n\n" +
+      "After Trakteer sends the notification, the bot/admin will extend your premium based on the amount.";
     const textId =
       "💳 *Pembayaran via Trakteer*\n\n" +
       "Tap tombol di bawah untuk membuka halaman Trakteer.\n" +
-      "Mohon tulis ID atau username Telegram kamu di pesan dukungan agar admin mudah memverifikasi.\n\n" +
-      "Jika pengecekan otomatis belum tersedia, admin akan menambah premium kamu secara manual setelah dicek.";
+      "Mohon tulis ID atau username Telegram kamu di pesan dukungan, dan sertakan juga *kode unik* berikut:\n\n" +
+      `\`${code}\`\n\n` +
+      "Setiap Rp 1.000 = 1 hari premium. Contoh: Rp 10.000 → 10 hari.\n\n" +
+      "Setelah Trakteer mengirim notifikasi, bot/admin akan menambah premium kamu berdasarkan nominal.";
 
     const keyboard = new InlineKeyboard();
     if (TRAKTEER_URL) {
@@ -614,6 +664,28 @@ async function main() {
     await ctx.editMessageText(lang === "en" ? textEn : textId, {
       parse_mode: "Markdown",
       reply_markup: TRAKTEER_URL ? keyboard : undefined,
+    });
+  });
+
+  bot.callbackQuery(/^pay_manual_admin:(\d+)$/, async (ctx) => {
+    const adminCandidateId = ctx.from.id;
+    if (!isAdmin(adminCandidateId)) {
+      await ctx.answerCallbackQuery({
+        text: "Only admins can receive manual payment reviews.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    const targetUserId = Number(ctx.match[1]);
+    const lang = await getUserLang(adminCandidateId);
+
+    await ctx.answerCallbackQuery({
+      text:
+        lang === "en"
+          ? "Please forward the user's screenshot manually from the chat to this admin/group."
+          : "Silakan forward sendiri screenshot user dari chat ke admin/grup ini.",
+      show_alert: true,
     });
   });
 
@@ -941,7 +1013,13 @@ async function main() {
             "If needed, you can still use /paymanual to contact the admin.",
           ];
 
-          await ctx.reply(lang === "en" ? linesEn.join("\n") : linesId.join("\n"));
+          const text = lang === "en" ? linesEn.join("\n") : linesId.join("\n");
+          const keyboard = new InlineKeyboard().text(
+            lang === "en" ? "📤 Send to admin" : "📤 Kirim ke admin",
+            `pay_manual_admin:${userId}`
+          );
+
+          await ctx.reply(text, { reply_markup: keyboard });
         }
 
         await setPaymentSession(userId, null);
