@@ -521,6 +521,8 @@ async function getPaymentSession(userId) {
  *   status text default 'pending',-- 'pending' | 'approved' | 'rejected'
  *   wallet text,
  *   ocr_text text,
+ *   code text,
+ *   tx_datetime timestamptz,
  *   created_at timestamptz default now()
  * );
  */
@@ -533,8 +535,10 @@ async function logPayment({
   status = "pending",
   wallet = "",
   ocrText = "",
+  code = "",
+  txDatetime = null,
 }) {
-  const { error } = await supabase.from("payments").insert({
+  const payload = {
     user_id: userId,
     method,
     amount,
@@ -542,8 +546,12 @@ async function logPayment({
     status,
     wallet,
     ocr_text: ocrText,
+    code: code || null,
+    tx_datetime: txDatetime,
     created_at: new Date().toISOString(),
-  });
+  };
+
+  const { error } = await supabase.from("payments").insert(payload);
 
   if (error) {
     console.error("Supabase logPayment error:", error.message);

@@ -77,13 +77,77 @@ function extractAmountCandidates(text) {
   return Array.from(candidates).sort((a, b) => a - b);
 }
 
+function findPaymentCodes(ocrText) {
+  const upper = ocrText.toUpperCase();
+  const matches = upper.match(/PAY-[A-Z0-9]{4,12}/g);
+  if (!matches) return [];
+  const unique = Array.from(new Set(matches));
+  return unique.sort();
+}
+
+function parseTransactionDatetime(ocrText) {
+  const upper = ocrText.toUpperCase();
+  const monthMap = {
+    JAN: 1,
+    JANUARI: 1,
+    FEB: 2,
+    FEBRUARI: 2,
+    MAR: 3,
+    MARET: 3,
+    APR: 4,
+    APRIL: 4,
+    MEI: 5,
+    JUN: 6,
+    JUNI: 6,
+    JUL: 7,
+    JULI: 7,
+    AGU: 8,
+    AGUSTUS: 8,
+    SEP: 9,
+    SEPT: 9,
+    SEPTEMBER: 9,
+    OKT: 10,
+    OKTOBER: 10,
+    NOV: 11,
+    NOVEMBER: 11,
+    DES: 12,
+    DESEMBER: 12,
+  };
+
+  const dateRegex =
+    /(\\d{1,2})\\s+(JAN|JANUARI|FEB|FEBRUARI|MAR|MARET|APR|APRIL|MEI|JUN|JUNI|JUL|JULI|AGU|AGUSTUS|SEP|SEPT|SEPTEMBER|OKT|OKTOBER|NOV|NOVEMBER|DES|DESEMBER)\\s+(\\d{4})/;
+  const dateMatch = upper.match(dateRegex);
+  const timeMatch = upper.match(/(\\d{1,2}):(\\d{2})/);
+
+  if (!dateMatch) return null;
+
+  const dayStr = dateMatch[1];
+  const monStr = dateMatch[2];
+  const yearStr = dateMatch[3];
+
+  try {
+    const day = Number(dayStr);
+    const year = Number(yearStr);
+    const month = monthMap[monStr];
+    if (!month) return null;
+
+    let hour = 12;
+    let minute = 0;
+    if (timeMatch) {
+      hour = Number(timeMatch[1]);
+      minute = Number(timeMatch[2]);
+    }
+
+    return new Date(Date.UTC(year, month - 1, day, hour, minute));
+  } catch (e) {
+    return null;
+  }
+}
+
 function containsWalletInfo(ocrText) {
   const upper = ocrText.toUpperCase();
   const nameUpper = E_WALLET_NAME.toUpperCase();
-  return (
-    upper.includes(E_WALLET_NUMBER) &&
-    upper.includes(nameUpper)
-  );
+  return upper.includes(E_WALLET_NUMBER) && upper.includes(nameUpper);
 }
 
 async function ocrPhotoFromTelegram(ctx, photo) {
@@ -700,11 +764,22 @@ async function main() {
         const amounts = extractAmountCandidates(ocrText);
         const maxAmount = amounts.length ? amounts[amounts.length - 1] : 0;
         const hasWalletInfo = containsWalletInfo(ocrText);
+        const codes = findPaymentCodes(ocrText);
+        const txDate = parseTransactionDatetime(ocrText);
+        const now = new Date();
+        const diffHours =
+          txDate != null
+            ? Math.abs(now.getTime() - txDate.getTime()) / 3600000
+            : null;
 
         let days = computePremiumDaysFromAmount(maxAmount);
 
+        // Aturan auto-approve: wallet cocok + nominal valid + tanggal <= 24 jam
         let status = "pending";
-        if (hasWalletInfo && days > 0) {
+        const within24h =
+          diffHours != null && Number.isFinite(diffHours) && diffHours <= 24;
+
+        if (hasWalletInfo && days > 0 && within24h) {
           status = "approved";
           await extendPremium(userId, days);
         }
@@ -717,6 +792,8 @@ async function main() {
           status,
           wallet: `${E_WALLET_NAME} ${E_WALLET_NUMBER}`,
           ocrText,
+          code: codes.length ? codes[0] : "",
+          txDatetime: txDate ? txDate.toISOString() : null,
         });
 
         // Kirim log ke grup transaksi jika dikonfigurasi
@@ -726,9 +803,15 @@ async function main() {
             "",
             `User ID: \`${userId}\``,
             `Status: ${status.toUpperCase()}`,
-            `Nominal OCR: Rp ${maxAmount ? maxAmount.toLocaleString("id-ID") : 0}`,
+            `Nominal OCR: Rp ${
+              maxAmount ? maxAmount.toLocaleString("id-ID") : 0
+            }`,
             `Hari premium: ${days}`,
-            `Wallet: ${E_WALLET_NAME} (${E_WALLET_NUMBER})`,
+            `Wallet (target seharusnya): ${E_WALLET_NAME} (${E_WALLET_NUMBER})`,
+            `Kode pembayaran OCR: ${codes.length ? codes.join(", ") : "-"}`,
+            `Tanggal transaksi OCR: ${
+              txDate ? txDate.toISOString() : "tidak terbaca"
+            }`,
             "",
             "*OCR text:*",
             "```",
@@ -753,17 +836,45 @@ async function main() {
         if (status === "approved") {
           const msgText =
             lang === "en"
-              ? `✅ Payment detected successfully.\nAmount: Rp ${maxAmount.toLocaleString("id-ID")}\nPremium extended by ${days} day(s).`
-              : `✅ Pembayaran berhasil terdeteksi.\nNominal: Rp ${maxAmount.toLocaleString("id-ID")}\nPremium kamu ditambah ${days} hari.`;
+              ? `✅ Payment detected successfully.\nAmount: Rp ${maxAmount.toLocaleString(
+                  "id-ID"
+                )}\nPremium extended by ${days} day(s).`
+              : `✅ Pembayaran berhasil terdeteksi.\nNominal: Rp ${maxAmount.toLocaleString(
+                  "id-ID"
+                )}\nPremium kamu ditambah ${days} hari.`;
 
           await ctx.reply(msgText);
         } else {
-          const msgText =
-            lang === "en"
-              ? "⚠️ We couldn't automatically verify your payment.\nThe admin will review it manually.\nYou can also use /paymanual if needed."
-              : "⚠️ Pembayaranmu belum bisa diverifikasi otomatis.\nAdmin akan meninjaunya secara manual.\nKamu juga bisa menggunakan /paymanual jika diperlukan.";
+          const linesId = [
+            "⚠️ Pembayaranmu belum bisa diverifikasi otomatis.",
+            "",
+            `Nominal OCR: Rp ${
+              maxAmount ? maxAmount.toLocaleString("id-ID") : 0
+            }`,
+            `Kode pembayaran OCR: ${codes.length ? codes.join(", ") : "-"}`,
+            `Tanggal transaksi OCR: ${
+              txDate ? txDate.toISOString() : "tidak terbaca"
+            }`,
+            "",
+            "Admin akan meninjau bukti pembayaranmu secara manual.",
+            "Jika perlu, kamu bisa tetap menggunakan /paymanual untuk menghubungi admin.",
+          ];
+          const linesEn = [
+            "⚠️ We couldn't automatically verify your payment.",
+            "",
+            `Amount OCR: Rp ${
+              maxAmount ? maxAmount.toLocaleString("id-ID") : 0
+            }`,
+            `Payment code OCR: ${codes.length ? codes.join(", ") : "-"}`,
+            `Transaction datetime OCR: ${
+              txDate ? txDate.toISOString() : "not detected"
+            }`,
+            "",
+            "The admin will review your payment manually.",
+            "If needed, you can still use /paymanual to contact the admin.",
+          ];
 
-          await ctx.reply(msgText);
+          await ctx.reply(lang === "en" ? linesEn.join("\n") : linesId.join("\n"));
         }
 
         await setPaymentSession(userId, null);
