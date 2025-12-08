@@ -991,9 +991,6 @@ async function main() {
               maxAmount ? maxAmount.toLocaleString("id-ID") : 0
             }`,
             `Kode pembayaran OCR: ${codes.length ? codes.join(", ") : "-"}`,
-            `Tanggal transaksi OCR: ${
-              txDate ? txDate.toISOString() : "tidak terbaca"
-            }`,
             "",
             "Admin akan meninjau bukti pembayaranmu secara manual.",
             "Jika perlu, kamu bisa tetap menggunakan /paymanual untuk menghubungi admin.",
@@ -1005,9 +1002,6 @@ async function main() {
               maxAmount ? maxAmount.toLocaleString("id-ID") : 0
             }`,
             `Payment code OCR: ${codes.length ? codes.join(", ") : "-"}`,
-            `Transaction datetime OCR: ${
-              txDate ? txDate.toISOString() : "not detected"
-            }`,
             "",
             "The admin will review your payment manually.",
             "If needed, you can still use /paymanual to contact the admin.",
