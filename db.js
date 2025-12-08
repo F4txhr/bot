@@ -456,6 +456,58 @@ async function isPaymentEnabled(key) {
   return data.enabled;
 }
 
+/** ========== PAYMENT SESSIONS ========== */
+/*
+ * Schema yang direkomendasikan:
+ *
+ * create table if not exists payment_sessions (
+ *   user_id bigint primary key,
+ *   mode text not null,           -- e.g. 'manual'
+ *   created_at timestamptz default now()
+ * );
+ */
+
+async function setPaymentSession(userId, mode) {
+  if (!mode) {
+    const { error } = await supabase
+      .from("payment_sessions")
+      .delete()
+      .eq("user_id", userId);
+    if (error) {
+      console.error("Supabase setPaymentSession delete error:", error.message);
+    }
+    return;
+  }
+
+  const { error } = await supabase.from("payment_sessions").upsert(
+    {
+      user_id: userId,
+      mode,
+      created_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" }
+  );
+  if (error) {
+    console.error("Supabase setPaymentSession upsert error:", error.message);
+  }
+}
+
+async function getPaymentSession(userId) {
+  const { data, error } = await supabase
+    .from("payment_sessions")
+    .select("mode")
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase getPaymentSession error:", error.message);
+    return null;
+  }
+  if (!data) return null;
+  return data.mode || null;
+}
+
 module.exports = {
   supabase,
   initDb,
@@ -482,4 +534,7 @@ module.exports = {
   // payment toggles
   setPaymentEnabled,
   isPaymentEnabled,
+  // payment sessions
+  setPaymentSession,
+  getPaymentSession,
 };

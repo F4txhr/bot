@@ -20,6 +20,8 @@ const {
   getUserStats,
   setPaymentEnabled,
   isPaymentEnabled,
+  setPaymentSession,
+  getPaymentSession,
 } = require("./db");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -356,13 +358,17 @@ async function main() {
       return;
     }
 
+    await setPaymentSession(userId, "manual");
+
     const textEn =
       "📱 *Manual payment (DANA/OVO/GoPay)*\n\n" +
-      "Please send your transfer *screenshot* in this chat, and the admin will review it.\n" +
+      "Please send your transfer *screenshot* in this chat now, and the admin will review it.\n" +
+      "While you are in this payment session, your messages will not be forwarded to any chat partner.\n\n" +
       "If automatic checking fails, you can still use /paymanual to request a manual review.";
     const textId =
       "📱 *Pembayaran manual (DANA/OVO/GoPay)*\n\n" +
-      "Silakan kirim *screenshot bukti transfer* di chat ini, nanti admin akan meninjaunya.\n" +
+      "Silakan kirim *screenshot bukti transfer* di chat ini sekarang, nanti admin akan meninjaunya.\n" +
+      "Selama kamu berada dalam sesi pembayaran ini, pesanmu tidak akan diteruskan ke pasangan chat.\n\n" +
       "Jika pengecekan otomatis gagal, kamu tetap bisa gunakan /paymanual untuk meminta review manual dari admin.";
 
     await ctx.answerCallbackQuery();
@@ -587,6 +593,29 @@ async function main() {
           ? "❌ Your account is blocked."
           : "❌ Akunmu diblokir.";
       await ctx.reply(msg);
+      return;
+    }
+
+    const paymentMode = await getPaymentSession(userId);
+    if (paymentMode === "manual") {
+      const lang = await getUserLang(userId);
+      const msg = ctx.message;
+
+      if (msg.photo && msg.photo.length > 0) {
+        await ctx.reply(
+          lang === "en"
+            ? "✅ Screenshot received. Admin will review your payment.\nYou can still use /paymanual if needed."
+            : "✅ Screenshot diterima. Admin akan meninjau pembayaranmu.\nKamu tetap bisa gunakan /paymanual jika diperlukan."
+        );
+        // Di sini nanti kita bisa tambahkan log ke Supabase + OCR dengan tesseract.js
+        await setPaymentSession(userId, null);
+      } else {
+        await ctx.reply(
+          lang === "en"
+            ? "📷 Please send a *screenshot* of your transfer for manual payment."
+            : "📷 Silakan kirim *screenshot* bukti transfer untuk pembayaran manual."
+        );
+      }
       return;
     }
 
