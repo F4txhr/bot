@@ -640,14 +640,14 @@ async function main() {
     const textEn =
       "💳 *Payment via Trakteer*\n\n" +
       "Tap the button below to open the Trakteer page.\n" +
-      "Please mention your Telegram ID or username in the support message, and also include this *unique code*:\n\n" +
+      "In the support message, please include only this *unique code*:\n\n" +
       `\`${code}\`\n\n` +
       "Each Rp 1.000 = 1 day of premium. Example: Rp 10.000 → 10 days.\n\n" +
       "After Trakteer sends the notification, the bot/admin will extend your premium based on the amount.";
     const textId =
       "💳 *Pembayaran via Trakteer*\n\n" +
       "Tap tombol di bawah untuk membuka halaman Trakteer.\n" +
-      "Mohon tulis ID atau username Telegram kamu di pesan dukungan, dan sertakan juga *kode unik* berikut:\n\n" +
+      "Di pesan dukungan, tulis *hanya kode unik* berikut ini:\n\n" +
       `\`${code}\`\n\n` +
       "Setiap Rp 1.000 = 1 hari premium. Contoh: Rp 10.000 → 10 hari.\n\n" +
       "Setelah Trakteer mengirim notifikasi, bot/admin akan menambah premium kamu berdasarkan nominal.";
@@ -667,9 +667,9 @@ async function main() {
     });
   });
 
-  bot.callbackQuery(/^pay_manual_admin:(\d+)$/, async (ctx) => {
-    const adminCandidateId = ctx.from.id;
-    if (!isAdmin(adminCandidateId)) {
+  bot.callbackQuery(/^pay_manual_admin:(\d+):(\d+):(\d+)$/, async (ctx) => {
+    const adminId = ctx.from.id;
+    if (!isAdmin(adminId)) {
       await ctx.answerCallbackQuery({
         text: "Only admins can receive manual payment reviews.",
         show_alert: true,
@@ -677,16 +677,110 @@ async function main() {
       return;
     }
 
-    const targetUserId = Number(ctx.match[1]);
-    const lang = await getUserLang(adminCandidateId);
+    const userId = Number(ctx.match[1]);
+    const messageId = Number(ctx.match[2]);
+    const days = Number(ctx.match[3]) || 0;
+    const lang = await getUserLang(adminId);
 
+    await ctx.answerCallbackQuery();
+
+    // Kirim screenshot ke semua admin, beri tombol approve/reject
+    const keyboard = new InlineKeyboard()
+      .text(
+        lang === "en"
+          ? `✅ Approve ${days || "?"} day(s)`
+          : `✅ Setujui ${days || "?"} hari`,
+        `pay_admin_approve:${userId}:${days || 0}`
+      )
+      .text(lang === "en" ? "❌ Reject" : "❌ Tolak", `pay_admin_reject:${userId}`);
+
+    for (const aid of ADMIN_IDS) {
+      try {
+        await bot.api.copyMessage(aid, userId, messageId, {
+          caption:
+            lang === "en"
+              ? `Manual payment review for user ${userId}.`
+              : `Review pembayaran manual untuk user ${userId}.`,
+          reply_markup: keyboard,
+        });
+      } catch (err) {
+        console.error("Gagal copyMessage ke admin:", err.message);
+      }
+    }
+  });
+
+  bot.callbackQuery(/^pay_admin_approve:(\d+):(\d+)$/, async (ctx) => {
+    const adminId = ctx.from.id;
+    if (!isAdmin(adminId)) {
+      await ctx.answerCallbackQuery({
+        text: "Only admins can approve.",
+        show_alert: true,
+      });
+      return;
+    }
+    const userId = Number(ctx.match[1]);
+    const days = Number(ctx.match[2]) || 0;
+    const lang = await getUserLang(adminId);
+
+    if (days <= 0) {
+      await ctx.answerCallbackQuery({
+        text:
+          lang === "en"
+            ? "Days is 0; please grant manually using /grantpremium."
+            : "Jumlah hari 0; gunakan /grantpremium secara manual.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    await extendPremium(userId, days);
     await ctx.answerCallbackQuery({
       text:
         lang === "en"
-          ? "Please forward the user's screenshot manually from the chat to this admin/group."
-          : "Silakan forward sendiri screenshot user dari chat ke admin/grup ini.",
+          ? `Approved. Premium extended by ${days} day(s).`
+          : `Disetujui. Premium ditambah ${days} hari.`,
       show_alert: true,
     });
+
+    try {
+      const userLang = await getUserLang(userId);
+      const msgUser =
+        userLang === "en"
+          ? `🎉 Your manual payment has been approved by admin. Premium extended by ${days} day(s).`
+          : `🎉 Pembayaran manual kamu disetujui admin. Premium ditambah ${days} hari.`;
+      await bot.api.sendMessage(userId, msgUser);
+    } catch (err) {
+      console.error("Gagal kirim notifikasi ke user:", err.message);
+    }
+  });
+
+  bot.callbackQuery(/^pay_admin_reject:(\d+)$/, async (ctx) => {
+    const adminId = ctx.from.id;
+    if (!isAdmin(adminId)) {
+      await ctx.answerCallbackQuery({
+        text: "Only admins can reject.",
+        show_alert: true,
+      });
+      return;
+    }
+    const userId = Number(ctx.match[1]);
+    const lang = await getUserLang(adminId);
+
+    await ctx.answerCallbackQuery({
+      text: lang === "en" ? "Marked as rejected." : "Ditandai sebagai ditolak.",
+      show_alert: false,
+    });
+
+    try {
+      const userLang = await getUserLang(userId);
+      const msgUser =
+        userLang === "en"
+          ? "❌ Your manual payment has been reviewed and rejected by admin."
+          : "❌ Pembayaran manual kamu telah ditinjau dan ditolak oleh admin.";
+      await bot.api.sendMessage(userId, msgUser);
+    } catch (err) {
+      console.error("Gagal kirim notifikasi reject ke user:", err.message);
+    }
   });
 
   bot.command("stats", async (ctx) => {
@@ -1010,7 +1104,7 @@ async function main() {
           const text = lang === "en" ? linesEn.join("\n") : linesId.join("\n");
           const keyboard = new InlineKeyboard().text(
             lang === "en" ? "📤 Send to admin" : "📤 Kirim ke admin",
-            `pay_manual_admin:${userId}`
+            `pay_manual_admin:${userId}:${msg.message_id}:${days || 0}`
           );
 
           await ctx.reply(text, { reply_markup: keyboard });
