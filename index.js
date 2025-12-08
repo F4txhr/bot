@@ -759,9 +759,17 @@ async function main() {
         : `\n\n✅ Disetujui oleh admin ${adminId} selama ${days} hari.`;
 
     try {
-      await ctx.editMessageCaption(originalCaption + approvedNote, {
-        reply_markup: undefined,
-      });
+      const msg = ctx.callbackQuery.message;
+      if (msg) {
+        await bot.api.editMessageCaption(
+          msg.chat.id,
+          msg.message_id,
+          {
+            caption: originalCaption + approvedNote,
+            reply_markup: undefined,
+          }
+        );
+      }
     } catch (err) {
       console.error("Gagal edit caption approve:", err.message);
     }
@@ -817,9 +825,17 @@ async function main() {
         : `\n\n❌ Ditolak oleh admin ${adminId}.`;
 
     try {
-      await ctx.editMessageCaption(originalCaption + rejectedNote, {
-        reply_markup: undefined,
-      });
+      const msg = ctx.callbackQuery.message;
+      if (msg) {
+        await bot.api.editMessageCaption(
+          msg.chat.id,
+          msg.message_id,
+          {
+            caption: originalCaption + rejectedNote,
+            reply_markup: undefined,
+          }
+        );
+      }
     } catch (err) {
       console.error("Gagal edit caption reject:", err.message);
     }
