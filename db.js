@@ -368,20 +368,17 @@ async function incrementChatCount(userId) {
     return;
   }
 
-  const current = data && typeof data.total_chats === "number"
-    ? data.total_chats
-    : 0;
+  const current =
+    data && typeof data.total_chats === "number" ? data.total_chats : 0;
 
-  const { error: upErr } = await supabase
-    .from("user_stats")
-    .upsert(
-      {
-        user_id: userId,
-        total_chats: current + 1,
-        last_active: nowIso,
-      },
-      { onConflict: "user_id" }
-    );
+  const { error: upErr } = await supabase.from("user_stats").upsert(
+    {
+      user_id: userId,
+      total_chats: current + 1,
+      last_active: nowIso,
+    },
+    { onConflict: "user_id" }
+  );
 
   if (upErr) {
     console.error("Supabase incrementChatCount upsert error:", upErr.message);
@@ -411,6 +408,54 @@ async function getUserStats(userId) {
   };
 }
 
+/** ========== PAYMENT TOGGLES ========== */
+/*
+ * Schema yang direkomendasikan:
+ *
+ * create table if not exists payment_settings (
+ *   key text primary key,
+ *   enabled boolean not null default true
+ * );
+ *
+ * Dengan key misalnya:
+ * - 'manual'   -> pembayaran manual e-wallet (DANA/OVO/Gopay)
+ * - 'trakteer' -> pembayaran via Trakteer
+ */
+
+async function setPaymentEnabled(key, enabled) {
+  const normalizedKey = key === "trakteer" ? "trakteer" : "manual";
+  const { error } = await supabase.from("payment_settings").upsert(
+    {
+      key: normalizedKey,
+      enabled: !!enabled,
+    },
+    { onConflict: "key" }
+  );
+  if (error) {
+    console.error("Supabase setPaymentEnabled error:", error.message);
+  }
+}
+
+async function isPaymentEnabled(key) {
+  const normalizedKey = key === "trakteer" ? "trakteer" : "manual";
+  const { data, error } = await supabase
+    .from("payment_settings")
+    .select("enabled")
+    .eq("key", normalizedKey)
+    .limit(1)
+    .maybeSingle();
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase isPaymentEnabled error:", error.message);
+    return true;
+  }
+
+  if (!data || typeof data.enabled !== "boolean") {
+    return true;
+  }
+  return data.enabled;
+}
+
 module.exports = {
   supabase,
   initDb,
@@ -434,4 +479,7 @@ module.exports = {
   // stats
   incrementChatCount,
   getUserStats,
+  // payment toggles
+  setPaymentEnabled,
+  isPaymentEnabled,
 };

@@ -18,9 +18,17 @@ const {
   extendPremium,
   incrementChatCount,
   getUserStats,
+  setPaymentEnabled,
+  isPaymentEnabled,
 } = require("./db");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
+const ADMIN_IDS = (process.env.ADMIN_IDS || "")
+  .split(",")
+  .map((x) => x.trim())
+  .filter(Boolean)
+  .map((x) => Number(x))
+  .filter((x) => !Number.isNaN(x));
 
 if (!BOT_TOKEN) {
   console.error("BOT_TOKEN belum diset di environment / .env");
@@ -30,6 +38,10 @@ if (!BOT_TOKEN) {
 const AUTO_BAN_REPORTS = 3;
 
 const bot = new Bot(BOT_TOKEN);
+
+function isAdmin(userId) {
+  return ADMIN_IDS.includes(userId);
+}
 
 async function startSearch(ctx) {
   const userId = ctx.from.id;
@@ -313,6 +325,95 @@ async function main() {
     ];
 
     await ctx.reply(lang === "en" ? linesEn.join("\n") : linesId.join("\n"));
+  });
+
+  bot.command("payment", async (ctx) => {
+    const userId = ctx.from.id;
+    if (!isAdmin(userId)) {
+      return;
+    }
+
+    const lang = await getUserLang(userId);
+    const args = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+
+    if (args.length === 0) {
+      const manualEnabled = await isPaymentEnabled("manual");
+      const trakteerEnabled = await isPaymentEnabled("trakteer");
+
+      const textId = [
+        "⚙️ Status pembayaran:",
+        `• Manual (DANA/OVO/Gopay): ${manualEnabled ? "ON ✅" : "OFF ❌"}`,
+        `• Trakteer: ${trakteerEnabled ? "ON ✅" : "OFF ❌"}`,
+        "",
+        "Contoh:",
+        "/payment on manual",
+        "/payment off trakteer",
+        "/payment on  (hidupkan semua)",
+        "/payment off (matikan semua)",
+      ].join("\n");
+
+      const textEn = [
+        "⚙️ Payment status:",
+        `• Manual (e-wallet): ${manualEnabled ? "ON ✅" : "OFF ❌"}`,
+        `• Trakteer: ${trakteerEnabled ? "ON ✅" : "OFF ❌"}`,
+        "",
+        "Examples:",
+        "/payment on manual",
+        "/payment off trakteer",
+        "/payment on  (enable both)",
+        "/payment off (disable both)",
+      ].join("\n");
+
+      await ctx.reply(lang === "en" ? textEn : textId);
+      return;
+    }
+
+    const action = args[0].toLowerCase();
+    const target = (args[1] || "").toLowerCase();
+
+    if (!["on", "off"].includes(action)) {
+      const msg =
+        lang === "en"
+          ? "Usage: /payment on|off [manual|trakteer]"
+          : "Cara pakai: /payment on|off [manual|trakteer]";
+      await ctx.reply(msg);
+      return;
+    }
+
+    const enabled = action === "on";
+
+    if (!target || target === "all") {
+      await setPaymentEnabled("manual", enabled);
+      await setPaymentEnabled("trakteer", enabled);
+    } else if (target === "manual") {
+      await setPaymentEnabled("manual", enabled);
+    } else if (target === "trakteer") {
+      await setPaymentEnabled("trakteer", enabled);
+    } else {
+      const msg =
+        lang === "en"
+          ? "Unknown target. Use: manual | trakteer | all"
+          : "Target tidak dikenal. Gunakan: manual | trakteer | all";
+      await ctx.reply(msg);
+      return;
+    }
+
+    const manualEnabled = await isPaymentEnabled("manual");
+    const trakteerEnabled = await isPaymentEnabled("trakteer");
+
+    const textId = [
+      "✅ Pengaturan pembayaran diperbarui:",
+      `• Manual (DANA/OVO/Gopay): ${manualEnabled ? "ON ✅" : "OFF ❌"}`,
+      `• Trakteer: ${trakteerEnabled ? "ON ✅" : "OFF ❌"}`,
+    ].join("\n");
+
+    const textEn = [
+      "✅ Payment settings updated:",
+      `• Manual (e-wallet): ${manualEnabled ? "ON ✅" : "OFF ❌"}`,
+      `• Trakteer: ${trakteerEnabled ? "ON ✅" : "OFF ❌"}`,
+    ].join("\n");
+
+    await ctx.reply(lang === "en" ? textEn : textId);
   });
 
   bot.on("message", async (ctx) => {
