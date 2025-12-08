@@ -508,6 +508,48 @@ async function getPaymentSession(userId) {
   return data.mode || null;
 }
 
+/** ========== PAYMENTS LOG (MANUAL/TRAKTEER) ========== */
+/*
+ * Schema yang direkomendasikan:
+ *
+ * create table if not exists payments (
+ *   id bigserial primary key,
+ *   user_id bigint not null,
+ *   method text not null,         -- 'manual' | 'trakteer'
+ *   amount bigint not null,
+ *   days int not null,
+ *   status text default 'pending',-- 'pending' | 'approved' | 'rejected'
+ *   wallet text,
+ *   ocr_text text,
+ *   created_at timestamptz default now()
+ * );
+ */
+
+async function logPayment({
+  userId,
+  method,
+  amount,
+  days,
+  status = "pending",
+  wallet = "",
+  ocrText = "",
+}) {
+  const { error } = await supabase.from("payments").insert({
+    user_id: userId,
+    method,
+    amount,
+    days,
+    status,
+    wallet,
+    ocr_text: ocrText,
+    created_at: new Date().toISOString(),
+  });
+
+  if (error) {
+    console.error("Supabase logPayment error:", error.message);
+  }
+}
+
 module.exports = {
   supabase,
   initDb,
@@ -537,4 +579,6 @@ module.exports = {
   // payment sessions
   setPaymentSession,
   getPaymentSession,
+  // payments log
+  logPayment,
 };

@@ -1,4 +1,5 @@
 const { Bot, InlineKeyboard } = require("grammy");
+const Tesseract = require("tesseract.js");
 require("dotenv").config();
 
 const {
@@ -22,6 +23,7 @@ const {
   isPaymentEnabled,
   setPaymentSession,
   getPaymentSession,
+  logPayment,
 } = require("./db");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -32,6 +34,8 @@ const ADMIN_IDS = (process.env.ADMIN_IDS || "")
   .map((x) => Number(x))
   .filter((x) => !Number.isNaN(x));
 const TRAKTEER_URL = process.env.TRAKTEER_URL || "";
+const E_WALLET_NUMBER = (process.env.E_WALLET_NUMBER || "089647770084").trim();
+const E_WALLET_NAME = (process.env.E_WALLET_NAME || "Achmad fatkurrois").trim();
 
 if (!BOT_TOKEN) {
   console.error("BOT_TOKEN belum diset di environment / .env");
@@ -44,6 +48,55 @@ const bot = new Bot(BOT_TOKEN);
 
 function isAdmin(userId) {
   return ADMIN_IDS.includes(userId);
+}
+
+// === Helper OCR & parsing pembayaran manual ===
+
+function extractAmountCandidates(text) {
+  const candidates = new Set();
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    const upper = line.toUpperCase();
+    const matches = upper.match(/RP\s*([0-9][0-9\.\,]*)/g);
+    if (!matches) continue;
+    for (const m of matches) {
+      const numPart = m.replace(/[^0-9]/g, "");
+      if (!numPart) continue;
+      const val = Number(numPart);
+      if (!Number.isNaN(val) && val > 0) {
+        candidates.add(val);
+      }
+    }
+  }
+  return Array.from(candidates).sort((a, b) => a - b);
+}
+
+function containsWalletInfo(ocrText) {
+  const upper = ocrText.toUpperCase();
+  const nameUpper = E_WALLET_NAME.toUpperCase();
+  return (
+    upper.includes(E_WALLET_NUMBER) &&
+    upper.includes(nameUpper)
+  );
+}
+
+async function ocrPhotoFromTelegram(ctx, photo) {
+  try {
+    const file = await ctx.api.getFile(photo.file_id);
+    const url = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
+    const res = await fetch(url);
+    const buffer = Buffer.from(await res.arrayBuffer());
+    const result = await Tesseract.recognize(buffer, "ind+eng");
+    return typeof result.data.text === "string" ? result.data.text : "";
+  } catch (err) {
+    console.error("OCR error:", err.message);
+    return "";
+  }
+}
+
+function computePremiumDaysFromAmount(amount) {
+  if (!amount || amount < 1000) return 0;
+  return Math.floor(amount / 1000);
 }
 
 async function startSearch(ctx) {
@@ -602,12 +655,51 @@ async function main() {
       const msg = ctx.message;
 
       if (msg.photo && msg.photo.length > 0) {
-        await ctx.reply(
-          lang === "en"
-            ? "✅ Screenshot received. Admin will review your payment.\nYou can still use /paymanual if needed."
-            : "✅ Screenshot diterima. Admin akan meninjau pembayaranmu.\nKamu tetap bisa gunakan /paymanual jika diperlukan."
-        );
-        // Di sini nanti kita bisa tambahkan log ke Supabase + OCR dengan tesseract.js
+        const photo = msg.photo[msg.photo.length - 1];
+        const ocrText = await ocrPhotoFromTelegram(ctx, photo);
+        const amounts = extractAmountCandidates(ocrText);
+        const maxAmount = amounts.length ? amounts[amounts.length - 1] : 0;
+        const hasWalletInfo = containsWalletInfo(ocrText);
+
+        let days = computePremiumDaysFromAmount(maxAmount);
+
+        if (hasWalletInfo && days > 0) {
+          await extendPremium(userId, days);
+          await logPayment({
+            userId,
+            method: "manual",
+            amount: maxAmount,
+            days,
+            status: "approved",
+            wallet: `${E_WALLET_NAME} ${E_WALLET_NUMBER}`,
+            ocrText,
+          });
+
+          const msgText =
+            lang === "en"
+              ? `✅ Payment detected successfully.\nAmount: Rp ${maxAmount.toLocaleString("id-ID")}\nPremium extended by ${days} day(s).`
+              : `✅ Pembayaran berhasil terdeteksi.\nNominal: Rp ${maxAmount.toLocaleString("id-ID")}\nPremium kamu ditambah ${days} hari.`;
+
+          await ctx.reply(msgText);
+        } else {
+          await logPayment({
+            userId,
+            method: "manual",
+            amount: maxAmount || 0,
+            days: days || 0,
+            status: "pending",
+            wallet: `${E_WALLET_NAME} ${E_WALLET_NUMBER}`,
+            ocrText,
+          });
+
+          const msgText =
+            lang === "en"
+              ? "⚠️ We couldn't automatically verify your payment.\nThe admin will review it manually.\nYou can also use /paymanual if needed."
+              : "⚠️ Pembayaranmu belum bisa diverifikasi otomatis.\nAdmin akan meninjaunya secara manual.\nKamu juga bisa menggunakan /paymanual jika diperlukan.";
+
+          await ctx.reply(msgText);
+        }
+
         await setPaymentSession(userId, null);
       } else {
         await ctx.reply(
