@@ -9,6 +9,7 @@
   "dependencies": {
     "grammy": "^1.38.4",
     "dotenv": "^16.4.0",
-    "@supabase/supabase-js": "^2.48.0"
+    "@supabase/supabase-js": "^2.48.0",
+    "tesseract.js": "^5.1.0"
   }
 }

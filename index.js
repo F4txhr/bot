@@ -416,6 +416,55 @@ async function main() {
     await ctx.reply(lang === "en" ? textEn : textId);
   });
 
+  // Admin: grant premium manually
+  bot.command("grantpremium", async (ctx) => {
+    const adminId = ctx.from.id;
+    if (!isAdmin(adminId)) {
+      return;
+    }
+
+    const lang = await getUserLang(adminId);
+    const args = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+
+    if (args.length < 2) {
+      const msg =
+        lang === "en"
+          ? "Usage: /grantpremium <user_id> <days>"
+          : "Cara pakai: /grantpremium <user_id> <hari>";
+      await ctx.reply(msg);
+      return;
+    }
+
+    const userId = Number(args[0]);
+    const days = Number(args[1]);
+
+    if (!userId || Number.isNaN(userId) || !days || Number.isNaN(days) || days <= 0) {
+      const msg =
+        lang === "en"
+          ? "User ID and days must be valid numbers and days > 0."
+          : "User ID dan jumlah hari harus berupa angka dan hari > 0.";
+      await ctx.reply(msg);
+      return;
+    }
+
+    await extendPremium(userId, days);
+
+    const msgAdmin =
+      lang === "en"
+        ? `✅ Premium for user ${userId} extended by ${days} day(s).`
+        : `✅ Premium untuk user ${userId} ditambah ${days} hari.`;
+    await ctx.reply(msgAdmin);
+
+    try {
+      const userLang = await getUserLang(userId);
+      const msgUser =
+        userLang === "en"
+          ? `🎉 Your premium has been extended by ${days} day(s) by admin.`
+          : `🎉 Premium kamu ditambah ${days} hari oleh admin.`;
+      await bot.api.sendMessage(userId, msgUser);
+    } catch (_) {}
+  });
+
   bot.on("message", async (ctx) => {
     if (ctx.message.text && ctx.message.text.startsWith("/")) return;
 
