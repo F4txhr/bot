@@ -209,16 +209,67 @@ async function handlePremium(ctx) {
   const lang = await getUserLang(userId);
   const premium = await isPremium(userId);
 
+  const manualEnabled = await isPaymentEnabled("manual");
+  const trakteerEnabled = await isPaymentEnabled("trakteer");
+
+  const methods = [];
+  if (manualEnabled) methods.push("manual");
+  if (trakteerEnabled) methods.push("trakteer");
+
+  if (methods.length === 0) {
+    // Tidak ada metode pembayaran yang aktif
+    if (lang === "en") {
+      const text = premium
+        ? "💎 You are currently a *premium* user.\n\nPayment methods are currently unavailable."
+        : "💎 You are currently *not* premium.\n\nPayment methods are currently unavailable.";
+      await ctx.reply(text, { parse_mode: "Markdown" });
+    } else {
+      const text = premium
+        ? "💎 Kamu saat ini adalah pengguna *premium*.\n\nSaat ini tidak ada metode pembayaran yang tersedia."
+        : "💎 Kamu saat ini *belum* premium.\n\nSaat ini tidak ada metode pembayaran yang tersedia.";
+      await ctx.reply(text, { parse_mode: "Markdown" });
+    }
+    return;
+  }
+
   if (lang === "en") {
-    const text = premium
-      ? "💎 You are currently a *premium* user.\n(Feature details can be added here later.)"
-      : "💎 Premium user feature (placeholder).\nYou are currently *not* premium.\n(Activation/payment logic can be added later.)";
-    await ctx.reply(text, { parse_mode: "Markdown" });
+    const lines = [];
+    if (premium) {
+      lines.push("💎 You are currently a *premium* user.");
+      lines.push("");
+    } else {
+      lines.push("💎 You are currently *not* premium.");
+      lines.push("");
+    }
+    lines.push("Available payment methods:");
+
+    if (manualEnabled) {
+      lines.push("• Manual transfer (DANA/OVO/GoPay) — use /paymanual (coming soon)");
+    }
+    if (trakteerEnabled) {
+      lines.push("• Trakteer — support via Trakteer (coming soon)");
+    }
+
+    await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
   } else {
-    const text = premium
-      ? "💎 Kamu saat ini adalah pengguna *premium*.\n(Detail fitur bisa ditambahkan nanti.)"
-      : "💎 Fitur pengguna premium (placeholder).\nSaat ini kamu *belum* premium.\n(Logika aktivasi/pembayaran bisa ditambahkan nanti.)";
-    await ctx.reply(text, { parse_mode: "Markdown" });
+    const lines = [];
+    if (premium) {
+      lines.push("💎 Kamu saat ini adalah pengguna *premium*.");
+      lines.push("");
+    } else {
+      lines.push("💎 Kamu saat ini *belum* premium.");
+      lines.push("");
+    }
+    lines.push("Metode pembayaran yang tersedia:");
+
+    if (manualEnabled) {
+      lines.push("• Transfer manual (DANA/OVO/GoPay) — pakai /paymanual (segera)");
+    }
+    if (trakteerEnabled) {
+      lines.push("• Trakteer — dukung via Trakteer (segera)");
+    }
+
+    await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
   }
 }
 
