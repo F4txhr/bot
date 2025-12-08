@@ -36,6 +36,12 @@ const ADMIN_IDS = (process.env.ADMIN_IDS || "")
 const TRAKTEER_URL = process.env.TRAKTEER_URL || "";
 const E_WALLET_NUMBER = (process.env.E_WALLET_NUMBER || "089647770084").trim();
 const E_WALLET_NAME = (process.env.E_WALLET_NAME || "Achmad fatkurrois").trim();
+const PAYMENT_LOG_CHAT_ID = Number(process.env.PAYMENT_LOG_CHAT_ID || "0");
+const PAYMENT_LOG_TOPIC_ID = Number(process.env.PAYMENT_LOG_TOPIC_ID || "0");
+const REPORT_LOG_CHAT_ID = Number(
+  process.env.REPORT_LOG_CHAT_ID || PAYMENT_LOG_CHAT_ID || "0"
+);
+const REPORT_LOG_TOPIC_ID = Number(process.env.REPORT_LOG_TOPIC_ID || "0");
 
 if (!BOT_TOKEN) {
   console.error("BOT_TOKEN belum diset di environment / .env");
@@ -191,6 +197,40 @@ async function handleReport(ctx) {
       );
     } catch (_) {}
     await clearPair(userId);
+  }
+
+  // Log ke grup report jika dikonfigurasi
+  if (REPORT_LOG_CHAT_ID) {
+    const reportTextId = [
+      "🛑 *Laporan Pengguna*",
+      "",
+      `Pelapor: \`${userId}\``,
+      `Dilaporkan: \`${partnerId}\``,
+      `Total laporan 24 jam terakhir: ${total}`,
+    ].join("\n");
+    const reportTextEn = [
+      "🛑 *User Report*",
+      "",
+      `Reporter: \`${userId}\``,
+      `Reported user: \`${partnerId}\``,
+      `Total reports in last 24h: ${total}`,
+    ].join("\n");
+    const adminLang = await getUserLang(userId);
+    try {
+      await bot.api.sendMessage(
+        REPORT_LOG_CHAT_ID,
+        adminLang === "en" ? reportTextEn : reportTextId,
+        {
+          parse_mode: "Markdown",
+          message_thread_id:
+            REPORT_LOG_TOPIC_ID && REPORT_LOG_TOPIC_ID > 0
+              ? REPORT_LOG_TOPIC_ID
+              : undefined,
+        }
+      );
+    } catch (err) {
+      console.error("Gagal kirim log report:", err.message);
+    }
   }
 }
 
@@ -663,18 +703,54 @@ async function main() {
 
         let days = computePremiumDaysFromAmount(maxAmount);
 
+        let status = "pending";
         if (hasWalletInfo && days > 0) {
+          status = "approved";
           await extendPremium(userId, days);
-          await logPayment({
-            userId,
-            method: "manual",
-            amount: maxAmount,
-            days,
-            status: "approved",
-            wallet: `${E_WALLET_NAME} ${E_WALLET_NUMBER}`,
-            ocrText,
-          });
+        }
 
+        await logPayment({
+          userId,
+          method: "manual",
+          amount: maxAmount || 0,
+          days: days || 0,
+          status,
+          wallet: `${E_WALLET_NAME} ${E_WALLET_NUMBER}`,
+          ocrText,
+        });
+
+        // Kirim log ke grup transaksi jika dikonfigurasi
+        if (PAYMENT_LOG_CHAT_ID) {
+          const baseLines = [
+            "💸 *Pembayaran Manual*",
+            "",
+            `User ID: \`${userId}\``,
+            `Status: ${status.toUpperCase()}`,
+            `Nominal OCR: Rp ${maxAmount ? maxAmount.toLocaleString("id-ID") : 0}`,
+            `Hari premium: ${days}`,
+            `Wallet: ${E_WALLET_NAME} (${E_WALLET_NUMBER})`,
+            "",
+            "*OCR text:*",
+            "```",
+            (ocrText || "").slice(0, 1900),
+            "```",
+          ];
+          const logText = baseLines.join("\n");
+
+          try {
+            await bot.api.sendMessage(PAYMENT_LOG_CHAT_ID, logText, {
+              parse_mode: "Markdown",
+              message_thread_id:
+                PAYMENT_LOG_TOPIC_ID && PAYMENT_LOG_TOPIC_ID > 0
+                  ? PAYMENT_LOG_TOPIC_ID
+                  : undefined,
+            });
+          } catch (err) {
+            console.error("Gagal kirim log pembayaran:", err.message);
+          }
+        }
+
+        if (status === "approved") {
           const msgText =
             lang === "en"
               ? `✅ Payment detected successfully.\nAmount: Rp ${maxAmount.toLocaleString("id-ID")}\nPremium extended by ${days} day(s).`
@@ -682,16 +758,6 @@ async function main() {
 
           await ctx.reply(msgText);
         } else {
-          await logPayment({
-            userId,
-            method: "manual",
-            amount: maxAmount || 0,
-            days: days || 0,
-            status: "pending",
-            wallet: `${E_WALLET_NAME} ${E_WALLET_NUMBER}`,
-            ocrText,
-          });
-
           const msgText =
             lang === "en"
               ? "⚠️ We couldn't automatically verify your payment.\nThe admin will review it manually.\nYou can also use /paymanual if needed."
