@@ -717,6 +717,22 @@ async function main() {
     const days = Number(ctx.match[2]) || 0;
     const lang = await getUserLang(adminId);
 
+    const message = ctx.callbackQuery.message;
+    const originalCaption = (message && message.caption) || "";
+    if (
+      originalCaption.includes("✅ Approved") ||
+      originalCaption.includes("❌ Rejected")
+    ) {
+      await ctx.answerCallbackQuery({
+        text:
+          lang === "en"
+            ? "This payment has already been processed."
+            : "Pembayaran ini sudah diproses.",
+        show_alert: false,
+      });
+      return;
+    }
+
     if (days <= 0) {
       await ctx.answerCallbackQuery({
         text:
@@ -736,6 +752,19 @@ async function main() {
           : `Disetujui. Premium ditambah ${days} hari.`,
       show_alert: true,
     });
+
+    const approvedNote =
+      lang === "en"
+        ? `\n\n✅ Approved by admin ${adminId} for ${days} day(s).`
+        : `\n\n✅ Disetujui oleh admin ${adminId} selama ${days} hari.`;
+
+    try {
+      await ctx.editMessageCaption(originalCaption + approvedNote, {
+        reply_markup: undefined,
+      });
+    } catch (err) {
+      console.error("Gagal edit caption approve:", err.message);
+    }
 
     try {
       const userLang = await getUserLang(userId);
@@ -761,10 +790,39 @@ async function main() {
     const userId = Number(ctx.match[1]);
     const lang = await getUserLang(adminId);
 
+    const message = ctx.callbackQuery.message;
+    const originalCaption = (message && message.caption) || "";
+    if (
+      originalCaption.includes("✅ Approved") ||
+      originalCaption.includes("❌ Rejected")
+    ) {
+      await ctx.answerCallbackQuery({
+        text:
+          lang === "en"
+            ? "This payment has already been processed."
+            : "Pembayaran ini sudah diproses.",
+        show_alert: false,
+      });
+      return;
+    }
+
     await ctx.answerCallbackQuery({
       text: lang === "en" ? "Marked as rejected." : "Ditandai sebagai ditolak.",
       show_alert: false,
     });
+
+    const rejectedNote =
+      lang === "en"
+        ? `\n\n❌ Rejected by admin ${adminId}.`
+        : `\n\n❌ Ditolak oleh admin ${adminId}.`;
+
+    try {
+      await ctx.editMessageCaption(originalCaption + rejectedNote, {
+        reply_markup: undefined,
+      });
+    } catch (err) {
+      console.error("Gagal edit caption reject:", err.message);
+    }
 
     try {
       const userLang = await getUserLang(userId);
