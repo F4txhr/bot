@@ -668,37 +668,32 @@ async function main() {
   });
 
   bot.callbackQuery(/^pay_manual_admin:(\d+):(\d+):(\d+)$/, async (ctx) => {
-    const adminId = ctx.from.id;
-    if (!isAdmin(adminId)) {
-      await ctx.answerCallbackQuery({
-        text: "Only admins can receive manual payment reviews.",
-        show_alert: true,
-      });
-      return;
-    }
-
+    // Dipicu oleh USER yang ingin mengirim bukti ke admin
     const userId = Number(ctx.match[1]);
     const messageId = Number(ctx.match[2]);
     const days = Number(ctx.match[3]) || 0;
-    const lang = await getUserLang(adminId);
 
     await ctx.answerCallbackQuery();
 
     // Kirim screenshot ke semua admin, beri tombol approve/reject
-    const keyboard = new InlineKeyboard()
-      .text(
-        lang === "en"
-          ? `✅ Approve ${days || "?"} day(s)`
-          : `✅ Setujui ${days || "?"} hari`,
-        `pay_admin_approve:${userId}:${days || 0}`
-      )
-      .text(lang === "en" ? "❌ Reject" : "❌ Tolak", `pay_admin_reject:${userId}`);
-
     for (const aid of ADMIN_IDS) {
+      const langAdmin = await getUserLang(aid);
+      const keyboard = new InlineKeyboard()
+        .text(
+          langAdmin === "en"
+            ? `✅ Approve ${days || "?"} day(s)`
+            : `✅ Setujui ${days || "?"} hari`,
+          `pay_admin_approve:${userId}:${days || 0}`
+        )
+        .text(
+          langAdmin === "en" ? "❌ Reject" : "❌ Tolak",
+          `pay_admin_reject:${userId}`
+        );
+
       try {
         await bot.api.copyMessage(aid, userId, messageId, {
           caption:
-            lang === "en"
+            langAdmin === "en"
               ? `Manual payment review for user ${userId}.`
               : `Review pembayaran manual untuk user ${userId}.`,
           reply_markup: keyboard,
