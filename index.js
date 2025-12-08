@@ -672,6 +672,23 @@ async function main() {
     const userId = Number(ctx.match[1]);
     const messageId = Number(ctx.match[2]);
     const days = Number(ctx.match[3]) || 0;
+    const langUser = await getUserLang(userId);
+
+    // Ubah tombol di pesan user menjadi "sudah dikirim"
+    try {
+      const msg = ctx.callbackQuery.message;
+      if (msg) {
+        const text =
+          langUser === "en"
+            ? "📤 Your proof has been sent to the admin. Please wait for review."
+            : "📤 Bukti pembayaranmu sudah dikirim ke admin. Mohon tunggu hasil review.";
+        await bot.api.editMessageText(msg.chat.id, msg.message_id, {
+          text,
+        });
+      }
+    } catch (err) {
+      console.error("Gagal edit pesan user setelah kirim ke admin:", err.message);
+    }
 
     await ctx.answerCallbackQuery();
 
@@ -1172,7 +1189,9 @@ async function main() {
 
           const text = lang === "en" ? linesEn.join("\n") : linesId.join("\n");
           const keyboard = new InlineKeyboard().text(
-            lang === "en" ? "📤 Send to admin" : "📤 Kirim ke admin",
+            lang === "en"
+              ? "📤 Send to admin (once)"
+              : "📤 Kirim ke admin (sekali)",
             `pay_manual_admin:${userId}:${msg.message_id}:${days || 0}`
           );
 
