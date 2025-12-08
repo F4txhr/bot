@@ -674,7 +674,7 @@ async function main() {
     const days = Number(ctx.match[3]) || 0;
     const langUser = await getUserLang(userId);
 
-    // Ubah tombol di pesan user menjadi "sudah dikirim"
+    // Ubah pesan user agar tidak bisa spam
     try {
       const msg = ctx.callbackQuery.message;
       if (msg) {
@@ -682,9 +682,7 @@ async function main() {
           langUser === "en"
             ? "📤 Your proof has been sent to the admin. Please wait for review."
             : "📤 Bukti pembayaranmu sudah dikirim ke admin. Mohon tunggu hasil review.";
-        await bot.api.editMessageText(msg.chat.id, msg.message_id, {
-          text,
-        });
+        await bot.api.editMessageText(msg.chat.id, msg.message_id, text);
       }
     } catch (err) {
       console.error("Gagal edit pesan user setelah kirim ke admin:", err.message);
