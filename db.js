@@ -306,7 +306,6 @@ async function isPremium(userId) {
 
 async function extendPremium(userId, days) {
   const now = new Date();
-  const nowIso = now.toISOString();
 
   const { data, error } = await supabase
     .from("premium")
@@ -343,6 +342,75 @@ async function extendPremium(userId, days) {
   }
 }
 
+/** ========== USER STATS ========== */
+/*
+ * Schema yang direkomendasikan:
+ *
+ * create table if not exists user_stats (
+ *   user_id bigint primary key,
+ *   total_chats bigint default 0,
+ *   last_active timestamptz default now()
+ * );
+ */
+
+async function incrementChatCount(userId) {
+  const nowIso = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from("user_stats")
+    .select("total_chats")
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase incrementChatCount select error:", error.message);
+    return;
+  }
+
+  const current = data && typeof data.total_chats === "number"
+    ? data.total_chats
+    : 0;
+
+  const { error: upErr } = await supabase
+    .from("user_stats")
+    .upsert(
+      {
+        user_id: userId,
+        total_chats: current + 1,
+        last_active: nowIso,
+      },
+      { onConflict: "user_id" }
+    );
+
+  if (upErr) {
+    console.error("Supabase incrementChatCount upsert error:", upErr.message);
+  }
+}
+
+async function getUserStats(userId) {
+  const { data, error } = await supabase
+    .from("user_stats")
+    .select("total_chats,last_active")
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase getUserStats error:", error.message);
+    return { total_chats: 0, last_active: null };
+  }
+
+  if (!data) {
+    return { total_chats: 0, last_active: null };
+  }
+
+  return {
+    total_chats: data.total_chats || 0,
+    last_active: data.last_active || null,
+  };
+}
+
 module.exports = {
   supabase,
   initDb,
@@ -363,4 +431,7 @@ module.exports = {
   // premium
   isPremium,
   extendPremium,
+  // stats
+  incrementChatCount,
+  getUserStats,
 };

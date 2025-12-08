@@ -15,6 +15,9 @@ const {
   getUserLang,
   setUserLang,
   isPremium,
+  extendPremium,
+  incrementChatCount,
+  getUserStats,
 } = require("./db");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -254,6 +257,10 @@ async function main() {
 
   bot.command("search", async (ctx) => {
     await startSearch(ctx);
+    // Setiap kali mulai chat baru (saat nanti dipasangkan), kita akan
+    // increment di dalam setPair. Di versi sederhana ini, kita bisa
+    // increment saat user memulai pencarian.
+    await incrementChatCount(ctx.from.id);
   });
 
   bot.command("stop", async (ctx) => {
@@ -279,6 +286,33 @@ async function main() {
 
   bot.command("premium", async (ctx) => {
     await handlePremium(ctx);
+  });
+
+  bot.command("stats", async (ctx) => {
+    const userId = ctx.from.id;
+    const lang = await getUserLang(userId);
+    const premium = await isPremium(userId);
+    const stats = await getUserStats(userId);
+
+    const linesId = [
+      "📊 Statistik kamu:",
+      `• Total obrolan (search): ${stats.total_chats || 0}`,
+      premium ? "• Status: Premium ✅" : "• Status: Gratis",
+      stats.last_active
+        ? `• Terakhir aktif: ${new Date(stats.last_active).toLocaleString("id-ID")}`
+        : "• Terakhir aktif: -",
+    ];
+
+    const linesEn = [
+      "📊 Your stats:",
+      `• Total chats (search): ${stats.total_chats || 0}`,
+      premium ? "• Status: Premium ✅" : "• Status: Free",
+      stats.last_active
+        ? `• Last active: ${new Date(stats.last_active).toLocaleString("en-US")}`
+        : "• Last active: -",
+    ];
+
+    await ctx.reply(lang === "en" ? linesEn.join("\n") : linesId.join("\n"));
   });
 
   bot.on("message", async (ctx) => {
