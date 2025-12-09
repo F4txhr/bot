@@ -508,6 +508,36 @@ async function getPaymentSession(userId) {
   return data.mode || null;
 }
 
+/** ========== PAYMENT CODES (KODE UNIK) ========== */
+/*
+ * Schema yang direkomendasikan:
+ *
+ * create table if not exists payment_codes (
+ *   code text primary key,
+ *   user_id bigint not null,
+ *   method text not null,             -- 'manual' | 'trakteer' | 'any'
+ *   used boolean not null default false,
+ *   created_at timestamptz default now()
+ * );
+ */
+
+async function savePaymentCode(code, userId, method = "any") {
+  if (!code || !userId) return;
+  const payload = {
+    code,
+    user_id: userId,
+    method,
+    used: false,
+    created_at: new Date().toISOString(),
+  };
+  const { error } = await supabase.from("payment_codes").upsert(payload, {
+    onConflict: "code",
+  });
+  if (error) {
+    console.error("Supabase savePaymentCode error:", error.message);
+  }
+}
+
 /** ========== PAYMENTS LOG (MANUAL/TRAKTEER) ========== */
 /*
  * Schema yang direkomendasikan:
@@ -589,4 +619,6 @@ module.exports = {
   getPaymentSession,
   // payments log
   logPayment,
+  // payment codes
+  savePaymentCode,
 };

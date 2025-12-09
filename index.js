@@ -24,6 +24,7 @@ const {
   setPaymentSession,
   getPaymentSession,
   logPayment,
+  savePaymentCode,
 } = require("./db");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -446,6 +447,14 @@ async function handlePremium(ctx) {
   }
 
   const code = generatePaymentCode();
+  // Simpan kode unik ini terkait user (dapat dipakai untuk manual/trakteer)
+  try {
+    await savePaymentCode(code, userId, "any");
+  } catch (err) {
+    console.error("Gagal savePaymentCode:", err.message);
+  }
+  // Simpan mapping kode -> user untuk manual & trakteer (dipakai webhook nanti)
+  await savePaymentCode(code, userId, "any");
 
   let text;
   if (lang === "en") {
