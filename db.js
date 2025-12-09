@@ -538,6 +538,70 @@ async function savePaymentCode(code, userId, method = "any") {
   }
 }
 
+async function findUserByPaymentCode(code, method = null) {
+  if (!code) return null;
+
+  let query = supabase
+    .from("payment_codes")
+    .select("user_id, used, method")
+    .eq("code", code)
+    .limit(1)
+    .maybeSingle();
+
+  const { data, error } = await query;
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase findUserByPaymentCode error:", error.message);
+    return null;
+  }
+  if (!data || data.used) return null;
+  if (method && data.method !== "any" && data.method !== method) return null;
+
+  return Number(data.user_id);
+}
+
+async function markPaymentCodeUsed(code) {
+  if (!code) return;
+  const { error } = await supabase
+    .from("payment_codes")
+    .update({ used: true })
+    .eq("code", code);
+  if (error) {
+    console.error("Supabase markPaymentCodeUsed error:", error.message);
+  }
+}
+
+// Cari user berdasarkan kode pembayaran yang belum digunakan
+async function findUserByPaymentCode(code) {
+  if (!code) return null;
+  const { data, error } = await supabase
+    .from("payment_codes")
+    .select("user_id, used, method")
+    .eq("code", code)
+    .limit(1)
+    .maybeSingle();
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase findUserByPaymentCode error:", error.message);
+    return null;
+  }
+  if (!data || data.used) {
+    return null;
+  }
+  return { userId: data.user_id, method: data.method || "any" };
+}
+
+async function markPaymentCodeUsed(code) {
+  if (!code) return;
+  const { error } = await supabase
+    .from("payment_codes")
+    .update({ used: true })
+    .eq("code", code);
+  if (error) {
+    console.error("Supabase markPaymentCodeUsed error:", error.message);
+  }
+}
+
 /** ========== PAYMENTS LOG (MANUAL/TRAKTEER) ========== */
 /*
  * Schema yang direkomendasikan:
@@ -588,6 +652,41 @@ async function logPayment({
   }
 }
 
+/** ========== PAYMENT CODES HELPERS ========== */
+
+async function findUserByPaymentCode(code, methodFilter = null) {
+  if (!code) return null;
+  let query = supabase
+    .from("payment_codes")
+    .select("user_id,used,method")
+    .eq("code", code)
+    .limit(1)
+    .maybeSingle();
+
+  const { data, error } = await query;
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase findUserByPaymentCode error:", error.message);
+    return null;
+  }
+  if (!data || data.used) return null;
+  if (methodFilter && data.method !== methodFilter && data.method !== "any") {
+    return null;
+  }
+  return Number(data.user_id);
+}
+
+async function markPaymentCodeUsed(code) {
+  if (!code) return;
+  const { error } = await supabase
+    .from("payment_codes")
+    .update({ used: true })
+    .eq("code", code);
+  if (error) {
+    console.error("Supabase markPaymentCodeUsed error:", error.message);
+  }
+}
+
 module.exports = {
   supabase,
   initDb,
@@ -621,4 +720,6 @@ module.exports = {
   logPayment,
   // payment codes
   savePaymentCode,
+  findUserByPaymentCode,
+  markPaymentCodeUsed,
 };

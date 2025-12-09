@@ -1,5 +1,7 @@
+const http = require("http");
 const { Bot, InlineKeyboard } = require("grammy");
 const Tesseract = require("tesseract.js");
+const http = require("http");
 require("dotenv").config();
 
 const {
@@ -28,6 +30,9 @@ const {
 } = require("./db");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
+const WEBHOOK_PORT = Number(process.env.WEBHOOK_PORT || "4244");
+const TRAKTEER_WEBHOOK_SECRET =
+  process.env.TRAKTEER_WEBHOOK_SECRET || "";
 const ADMIN_IDS = (process.env.ADMIN_IDS || "")
   .split(",")
   .map((x) => x.trim())
@@ -35,6 +40,8 @@ const ADMIN_IDS = (process.env.ADMIN_IDS || "")
   .map((x) => Number(x))
   .filter((x) => !Number.isNaN(x));
 const TRAKTEER_URL = process.env.TRAKTEER_URL || "";
+const TRAKTEER_WEBHOOK_SECRET =
+  process.env.TRAKTEER_WEBHOOK_SECRET || "";
 const E_WALLET_NUMBER = (process.env.E_WALLET_NUMBER || "089647770084").trim();
 const E_WALLET_NAME = (process.env.E_WALLET_NAME || "Achmad fatkurrois").trim();
 const PAYMENT_LOG_CHAT_ID = Number(process.env.PAYMENT_LOG_CHAT_ID || "0");
@@ -43,6 +50,9 @@ const REPORT_LOG_CHAT_ID = Number(
   process.env.REPORT_LOG_CHAT_ID || PAYMENT_LOG_CHAT_ID || "0"
 );
 const REPORT_LOG_TOPIC_ID = Number(process.env.REPORT_LOG_TOPIC_ID || "0");
+const WEBHOOK_PORT = Number(process.env.WEBHOOK_PORT || "4244");
+// Port HTTP untuk webhook Trakteer (gunakan port dari panel, mis: 4244)
+const WEBHOOK_PORT = Number(process.env.WEBHOOK_PORT || "4244");
 
 if (!BOT_TOKEN) {
   console.error("BOT_TOKEN belum diset di environment / .env");
@@ -52,6 +62,9 @@ if (!BOT_TOKEN) {
 const AUTO_BAN_REPORTS = 3;
 
 const bot = new Bot(BOT_TOKEN);
+
+// Port HTTP untuk webhook Trakteer (gunakan PORT Pterodactyl / Address port)
+const WEBHOOK_PORT = Number(process.env.WEBHOOK_PORT || 4244);
 
 function isAdmin(userId) {
   return ADMIN_IDS.includes(userId);
@@ -1258,7 +1271,87 @@ async function main() {
   console.log("🤖 Bot Telegram berjalan (NodeJS + grammY + Supabase)");
 }
 
-main().catch((err) => {
+main().catch((err) =&gt; {
   console.error("Gagal start bot:", err);
   process.exit(1);
+});
+
+// === HTTP server sederhana untuk Trakteer webhook ===
+
+const server = http.createServer(async (req, res) =&gt; {
+  if (req.method === "POST" &amp;&amp; req.url === "/trakteer/webhook") {
+    let body = "";
+    req.on("data", (chunk) =&gt; {
+      body += chunk;
+      if (body.length &gt; 1e6) {
+        // batasi ukuran body, hindari spam
+        req.destroy();
+      }
+    });
+    req.on("end", () =&gt; {
+      console.log("Webhook Trakteer diterima, raw body:", body);
+      try {
+        const data = JSON.parse(body || "{}");
+        console.log("Webhook Trakteer parsed JSON:", data);
+      } catch (e) {
+        console.error("Gagal parse JSON webhook Trakteer:", e.message);
+      }
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ status: "ok" }));
+    });
+    return;
+  }
+
+  res.statusCode = 404;
+  res.setHeader("Content-Type", "text/plain");
+  res.end("not found");
+});
+
+server.listen(WEBHOOK_PORT, () =&gt; {
+  console.log("HTTP server untuk Trakteer webhook listen di port", WEBHOOK_PORT);
+});
+
+// === HTTP server sederhana untuk webhook Trakteer ===
+const server = http.createServer((req, res) => {
+  if (req.method === "POST" && req.url === "/trakteer/webhook") {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 1e6) {
+        // batasi body, hindari flood
+        req.destroy();
+      }
+    });
+    req.on("end", () => {
+      res.setHeader("Content-Type", "application/json");
+
+      try {
+        const data = body ? JSON.parse(body) : {};
+        console.log("📥 Trakteer webhook payload diterima:", data);
+
+        // TODO: di langkah berikutnya:
+        // - verifikasi signature (TRAKTEER_WEBHOOK_SECRET)
+        // - ekstrak amount & message
+        // - cari kode unik PAY-XXXX dan mapping ke user_id
+        // - extendPremium + logPayment
+
+        res.statusCode = 200;
+        res.end(JSON.stringify({ status: "ok", echo: data }));
+      } catch (err) {
+        console.error("Gagal parse payload webhook Trakteer:", err.message);
+        res.statusCode = 400;
+        res.end(JSON.stringify({ status: "error", error: err.message }));
+      }
+    });
+    return;
+  }
+
+  res.statusCode = 405;
+  res.setHeader("Content-Type", "text/plain");
+  res.end("Method Not Allowed");
+});
+
+server.listen(WEBHOOK_PORT, () => {
+  console.log("🌐 HTTP server webhook Trakteer listen di port", WEBHOOK_PORT);
 });
