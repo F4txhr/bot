@@ -1,7 +1,7 @@
 const http = require("http");
 const { Bot, InlineKeyboard } = require("grammy");
 const Tesseract = require("tesseract.js");
-const http = require("http");
+require("dotenv").config(new;
 require("dotenv").config();
 
 const {
@@ -30,9 +30,6 @@ const {
 } = require("./db");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const WEBHOOK_PORT = Number(process.env.WEBHOOK_PORT || "4244");
-const TRAKTEER_WEBHOOK_SECRET =
-  process.env.TRAKTEER_WEBHOOK_SECRET || "";
 const ADMIN_IDS = (process.env.ADMIN_IDS || "")
   .split(",")
   .map((x) => x.trim())
@@ -50,7 +47,6 @@ const REPORT_LOG_CHAT_ID = Number(
   process.env.REPORT_LOG_CHAT_ID || PAYMENT_LOG_CHAT_ID || "0"
 );
 const REPORT_LOG_TOPIC_ID = Number(process.env.REPORT_LOG_TOPIC_ID || "0");
-const WEBHOOK_PORT = Number(process.env.WEBHOOK_PORT || "4244");
 // Port HTTP untuk webhook Trakteer (gunakan port dari panel, mis: 4244)
 const WEBHOOK_PORT = Number(process.env.WEBHOOK_PORT || "4244");
 
@@ -460,14 +456,12 @@ async function handlePremium(ctx) {
   }
 
   const code = generatePaymentCode();
-  // Simpan kode unik ini terkait user (dapat dipakai untuk manual/trakteer)
+  // Simpan mapping kode -> user untuk manual & trakteer (dipakai webhook nanti)
   try {
     await savePaymentCode(code, userId, "any");
   } catch (err) {
     console.error("Gagal savePaymentCode:", err.message);
   }
-  // Simpan mapping kode -> user untuk manual & trakteer (dipakai webhook nanti)
-  await savePaymentCode(code, userId, "any");
 
   let text;
   if (lang === "en") {
@@ -1274,42 +1268,6 @@ async function main() {
 main().catch((err) =&gt; {
   console.error("Gagal start bot:", err);
   process.exit(1);
-});
-
-// === HTTP server sederhana untuk Trakteer webhook ===
-
-const server = http.createServer(async (req, res) =&gt; {
-  if (req.method === "POST" &amp;&amp; req.url === "/trakteer/webhook") {
-    let body = "";
-    req.on("data", (chunk) =&gt; {
-      body += chunk;
-      if (body.length &gt; 1e6) {
-        // batasi ukuran body, hindari spam
-        req.destroy();
-      }
-    });
-    req.on("end", () =&gt; {
-      console.log("Webhook Trakteer diterima, raw body:", body);
-      try {
-        const data = JSON.parse(body || "{}");
-        console.log("Webhook Trakteer parsed JSON:", data);
-      } catch (e) {
-        console.error("Gagal parse JSON webhook Trakteer:", e.message);
-      }
-      res.statusCode = 200;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ status: "ok" }));
-    });
-    return;
-  }
-
-  res.statusCode = 404;
-  res.setHeader("Content-Type", "text/plain");
-  res.end("not found");
-});
-
-server.listen(WEBHOOK_PORT, () =&gt; {
-  console.log("HTTP server untuk Trakteer webhook listen di port", WEBHOOK_PORT);
 });
 
 // === HTTP server sederhana untuk webhook Trakteer ===
