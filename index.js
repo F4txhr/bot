@@ -1,7 +1,6 @@
 const http = require("http");
 const { Bot, InlineKeyboard } = require("grammy");
 const Tesseract = require("tesseract.js");
-require("dotenv").config(new;
 require("dotenv").config();
 
 const {
