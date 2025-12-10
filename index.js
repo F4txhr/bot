@@ -58,9 +58,6 @@ const AUTO_BAN_REPORTS = 3;
 
 const bot = new Bot(BOT_TOKEN);
 
-// Port HTTP untuk webhook Trakteer (gunakan PORT Pterodactyl / Address port)
-const WEBHOOK_PORT = Number(process.env.WEBHOOK_PORT || 4244);
-
 function isAdmin(userId) {
   return ADMIN_IDS.includes(userId);
 }
