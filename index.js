@@ -1261,7 +1261,7 @@ async function main() {
   console.log("🤖 Bot Telegram berjalan (NodeJS + grammY + Supabase)");
 }
 
-main().catch((err) =&gt; {
+main().catch((err) => {
   console.error("Gagal start bot:", err);
   process.exit(1);
 });
