@@ -26,6 +26,8 @@ const {
   getPaymentSession,
   logPayment,
   savePaymentCode,
+  findUserByPaymentCode,
+  markPaymentCodeUsed,
 } = require("./db");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -1277,23 +1279,144 @@ const server = http.createServer((req, res) => {
         req.destroy();
       }
     });
-    req.on("end", () => {
+    req.on("end", async () => {
       res.setHeader("Content-Type", "application/json");
 
       try {
         const data = body ? JSON.parse(body) : {};
         console.log("📥 Trakteer webhook payload diterima:", data);
 
-        // TODO: di langkah berikutnya:
-        // - verifikasi signature (TRAKTEER_WEBHOOK_SECRET)
-        // - ekstrak amount & message
-        // - cari kode unik PAY-XXXX dan mapping ke user_id
-        // - extendPremium + logPayment
+        const amount = Number(
+          data.amount ??
+            data.nominal ??
+            data.value ??
+            data.price ??
+            0
+        );
+        const message =
+          (data.message ||
+            data.note ||
+            data.support_message ||
+            "") + "";
+
+        const codes =
+          message.toUpperCase().match(/PAY-[A-Z0-9]{4,12}/g) || [];
+        const code = codes.length ? codes[0] : null;
+
+        if (!code || !Number.isFinite(amount) || amount < 1000) {
+          res.statusCode = 200;
+          res.end(
+            JSON.stringify({
+              status: "ignored",
+              reason: "no valid code or amount < 1000",
+            })
+          );
+          return;
+        }
+
+        const userId = await findUserByPaymentCode(code, "trakteer");
+
+        if (!userId) {
+          console.warn(
+            "Trakteer webhook: kode tidak dikenal atau sudah dipakai:",
+            code
+          );
+          res.statusCode = 200;
+          res.end(
+            JSON.stringify({
+              status: "ignored",
+              reason: "unknown or used code",
+            })
+          );
+          return;
+        }
+
+        const days = Math.floor(amount / 1000);
+        if (days <= 0) {
+          res.statusCode = 200;
+          res.end(
+            JSON.stringify({
+              status: "ignored",
+              reason: "calculated days <= 0",
+            })
+          );
+          return;
+        }
+
+        await extendPremium(userId, days);
+        await markPaymentCodeUsed(code);
+        await logPayment({
+          userId,
+          method: "trakteer",
+          amount,
+          days,
+          status: "approved",
+          wallet: "TRAKTEER",
+          ocrText: "",
+          code,
+          txDatetime: null,
+        });
+
+        try {
+          const lang = await getUserLang(userId);
+          const msg =
+            lang === "en"
+              ? `🎉 Thank you for supporting via Trakteer!\nAmount: Rp ${amount.toLocaleString(
+                  "id-ID"
+                )}\nPremium extended by ${days} day(s).`
+              : `🎉 Terima kasih sudah mendukung via Trakteer!\nNominal: Rp ${amount.toLocaleString(
+                  "id-ID"
+                )}\nPremium kamu ditambah ${days} hari.`;
+          await bot.api.sendMessage(userId, msg);
+        } catch (err) {
+          console.error(
+            "Gagal kirim notifikasi ke user dari webhook Trakteer:",
+            err.message
+          );
+        }
+
+        if (PAYMENT_LOG_CHAT_ID) {
+          const logLines = [
+            "💳 *Pembayaran Trakteer*",
+            "",
+            `User ID: \`${userId}\``,
+            `Status: APPROVED`,
+            `Nominal: Rp ${amount.toLocaleString("id-ID")}`,
+            `Hari premium: ${days}`,
+            `Kode unik: ${code}`,
+            "",
+            "*Payload:*",
+            "```",
+            JSON.stringify(data, null, 2).slice(0, 1900),
+            "```",
+          ];
+          const logText = logLines.join("\n");
+          try {
+            await bot.api.sendMessage(PAYMENT_LOG_CHAT_ID, logText, {
+              parse_mode: "Markdown",
+              message_thread_id:
+                PAYMENT_LOG_TOPIC_ID && PAYMENT_LOG_TOPIC_ID > 0
+                  ? PAYMENT_LOG_TOPIC_ID
+                  : undefined,
+            });
+          } catch (err) {
+            console.error(
+              "Gagal kirim log pembayaran Trakteer:",
+              err.message
+            );
+          }
+        }
 
         res.statusCode = 200;
-        res.end(JSON.stringify({ status: "ok", echo: data }));
+        res.end(
+          JSON.stringify({
+            status: "ok",
+            user_id: userId,
+            days,
+          })
+        );
       } catch (err) {
-        console.error("Gagal parse payload webhook Trakteer:", err.message);
+        console.error("Gagal proses payload webhook Trakteer:", err.message);
         res.statusCode = 400;
         res.end(JSON.stringify({ status: "error", error: err.message }));
       }
