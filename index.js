@@ -574,8 +574,12 @@ async function main() {
       "• /report — laporkan pasangan yang melanggar",
       "• /lang — ganti bahasa (id/en)",
       "• /showid — kirim link profilmu ke pasangan",
+      "• /premium — cek status premium & cara bayar",
+      "• /stats — lihat statistik chat",
+      "• /payhistory — riwayat pembayaranmu",
+      "• /discount — cek / klaim kode diskon",
       "",
-      "Coba kirim /search untuk mulai.",
+      "Coba kirim /search untuk mulai, atau /help untuk bantuan lengkap.",
     ].join("\n");
 
     const textEn = [
@@ -590,12 +594,82 @@ async function main() {
       "• /report — report your current partner",
       "• /lang — change language (id/en)",
       "• /showid — share your profile link with partner",
+      "• /premium — check premium status & payment options",
+      "• /stats — view your chat stats",
+      "• /payhistory — your payment history",
+      "• /discount — check / claim discount code",
       "",
-      "Type /search to start.",
+      "Type /search to start, or /help for full help.",
     ].join("\n");
 
     await ctx.reply(lang === "en" ? textEn : textId, {
       parse_mode: "Markdown",
+    });
+  });
+
+  bot.command("help", async (ctx) => {
+    const userId = ctx.from.id;
+    const lang = await getUserLang(userId);
+    const admin = isAdmin(userId);
+
+    const kb = new InlineKeyboard()
+      .text(lang === "en" ? "🔍 Search" : "🔍 Cari", "help_search")
+      .text(lang === "en" ? "⛔ Stop" : "⛔ Stop", "help_stop")
+      .row()
+      .text(lang === "en" ? "➡️ Next" : "➡️ Next", "help_next")
+      .text(lang === "en" ? "⚠️ Report" : "⚠️ Report", "help_report")
+      .row()
+      .text(lang === "en" ? "🌐 Language" : "🌐 Bahasa", "help_lang")
+      .text(lang === "en" ? "🔗 Profile" : "🔗 Profil", "help_showid")
+      .row()
+      .text(lang === "en" ? "💎 Premium" : "💎 Premium", "help_premium")
+      .text(lang === "en" ? "📊 Stats" : "📊 Statistik", "help_stats")
+      .row()
+      .text(lang === "en" ? "💳 Payments" : "💳 Pembayaran", "help_pay")
+      .text(lang === "en" ? "💸 Discount" : "💸 Diskon", "help_discount");
+
+    if (admin) {
+      kb.row().text(
+        lang === "en" ? "🛠 Admin commands" : "🛠 Perintah admin",
+        "help_admin"
+      );
+    }
+
+    const textId = [
+      "❓ *Bantuan ShadowChat*",
+      "",
+      "Gunakan tombol di bawah untuk melihat penjelasan tiap fitur.",
+      "",
+      "Beberapa perintah penting:",
+      "• /search — cari pasangan ngobrol anonim",
+      "• /stop — hentikan obrolan yang sedang berjalan",
+      "• /next — cari pasangan lain",
+      "• /report — laporkan pasangan yang melanggar",
+      "• /premium — status & cara beli premium",
+      "• /stats — statistik chat kamu",
+      "• /payhistory — riwayat pembayaranmu",
+      "• /discount — cek / klaim kode diskon",
+    ].join("\n");
+
+    const textEn = [
+      "❓ *ShadowChat Help*",
+      "",
+      "Use the buttons below to see details for each feature.",
+      "",
+      "Some important commands:",
+      "• /search — find a random chat partner",
+      "• /stop — stop the current chat",
+      "• /next — find another partner",
+      "• /report — report your current partner",
+      "• /premium — premium status & how to buy",
+      "• /stats — your chat stats",
+      "• /payhistory — your payment history",
+      "• /discount — check / claim discount code",
+    ].join("\n");
+
+    await ctx.reply(lang === "en" ? textEn : textId, {
+      parse_mode: "Markdown",
+      reply_markup: kb,
     });
   });
 
@@ -783,6 +857,7 @@ async function main() {
       `Please transfer to *${E_WALLET_NAME}* (${E_WALLET_NUMBER}).\n` +
       "Use the following *unique code* in your payment note/message:\n\n" +
       `\`${code}\`\n\n` +
+      "If you have an active *discount code*, it will be applied automatically if the amount and conditions match.\n\n" +
       "Then send your transfer *screenshot* in this chat. The bot will try to verify it automatically.\n" +
       "While you are in this payment session, your messages will not be forwarded to any chat partner.\n\n" +
       "If automatic checking fails, you can still use /paymanual to request a manual review.";
@@ -791,6 +866,7 @@ async function main() {
       `Silakan transfer ke *${E_WALLET_NAME}* (${E_WALLET_NUMBER}).\n` +
       "Gunakan *kode unik* berikut di catatan/pesan pembayaran kamu:\n\n" +
       `\`${code}\`\n\n` +
+      "Jika kamu memiliki *kode diskon* aktif, diskon akan diterapkan otomatis jika nominal & syaratnya sesuai.\n\n" +
       "Setelah itu kirim *screenshot bukti transfer* di chat ini. Bot akan mencoba memverifikasi secara otomatis.\n" +
       "Selama kamu berada dalam sesi pembayaran ini, pesanmu tidak akan diteruskan ke pasangan chat.\n\n" +
       "Jika pengecekan otomatis gagal, kamu tetap bisa gunakan /paymanual untuk meminta review manual dari admin.";
@@ -1276,6 +1352,101 @@ async function main() {
     ].join("\n");
 
     await ctx.reply(lang === "en" ? textEn : textId);
+  });
+
+  // Admin: create discount code
+  bot.command("discount_add", async (ctx) => {
+    const adminId = ctx.from.id;
+    if (!isAdmin(adminId)) {
+      return;
+    }
+    const lang = await getUserLang(adminId);
+    const args = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+    // /discount_add CODE PERCENT [MAX_USES] [HOURS] [MIN_AMOUNT]
+    if (args.length < 2) {
+      const msg =
+        lang === "en"
+          ? "Usage: /discount_add CODE PERCENT [MAX_USES] [HOURS] [MIN_AMOUNT]\nExample: /discount_add DISC20 20 100 168 10000"
+          : "Cara pakai: /discount_add KODE PERSEN [MAX_USES] [JAM] [MIN_NOMINAL]\nContoh: /discount_add DISC20 20 100 168 10000";
+      await ctx.reply(msg);
+      return;
+    }
+
+    const rawCode = args[0];
+    const percent = Number(args[1]);
+    const maxUses = args.length >= 3 ? Number(args[2]) : 0;
+    const hours = args.length >= 4 ? Number(args[3]) : 0;
+    const minAmount = args.length >= 5 ? Number(args[4]) : 0;
+
+    try {
+      const info = await createDiscountCode({
+        rawCode,
+        percent,
+        maxUses,
+        validHours: hours,
+        minAmount,
+        createdBy: adminId,
+      });
+
+      const minLine =
+        info.min_amount && info.min_amount > 0
+          ? lang === "en"
+            ? `• Minimum amount: Rp ${info.min_amount.toLocaleString("id-ID")}`
+            : `• Minimal nominal: Rp ${info.min_amount.toLocaleString("id-ID")}`
+          : "";
+
+      const maxLine =
+        info.max_uses && info.max_uses > 0
+          ? lang === "en"
+            ? `• Max uses: ${info.max_uses}`
+            : `• Maks pemakaian: ${info.max_uses}`
+          : lang === "en"
+          ? "• Max uses: unlimited"
+          : "• Maks pemakaian: tanpa batas";
+
+      const expLine = info.expire_at
+        ? lang === "en"
+          ? `• Expires at: ${new Date(info.expire_at).toLocaleString("en-US")}`
+          : `• Berlaku sampai: ${new Date(info.expire_at).toLocaleString(
+              "id-ID"
+            )}`
+        : lang === "en"
+        ? "• Expires at: (no expiry set)"
+        : "• Berlaku sampai: (tanpa batas waktu)";
+
+      const text =
+        lang === "en"
+          ? [
+              "✅ Discount code created:",
+              "",
+              `• Code: \`${info.code}\``,
+              `• Percent: ${info.percent}%`,
+              maxLine,
+              minLine,
+              expLine,
+            ]
+              .filter(Boolean)
+              .join("\n")
+          : [
+              "✅ Kode diskon dibuat:",
+              "",
+              `• Kode: \`${info.code}\``,
+              `• Diskon: ${info.percent}%`,
+              maxLine,
+              minLine,
+              expLine,
+            ]
+              .filter(Boolean)
+              .join("\n");
+
+      await ctx.reply(text, { parse_mode: "Markdown" });
+    } catch (err) {
+      const msg =
+        lang === "en"
+          ? `❌ Failed to create discount code: ${err.message}`
+          : `❌ Gagal membuat kode diskon: ${err.message}`;
+      await ctx.reply(msg);
+    }
   });
 
   // Admin: grant premium manually
