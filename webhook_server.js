@@ -1,5 +1,6 @@
 const http = require("http");
 const { Bot } = require("grammy");
+const crypto = require("crypto");
 require("dotenv").config();
 
 const {
@@ -8,12 +9,17 @@ const {
   logPayment,
   findUserByPaymentCode,
   markPaymentCodeUsed,
+  getUserDiscount,
+  getDiscountInfo,
+  markDiscountUsed,
+  clearUserDiscount,
 } = require("./db");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const PAYMENT_LOG_CHAT_ID = Number(process.env.PAYMENT_LOG_CHAT_ID || "0");
 const PAYMENT_LOG_TOPIC_ID = Number(process.env.PAYMENT_LOG_TOPIC_ID || "0");
 const WEBHOOK_PORT = Number(process.env.WEBHOOK_PORT || "8000");
+const TRAKTEER_WEBHOOK_SECRET = process.env.TRAKTEER_WEBHOOK_SECRET || "";
 
 if (!BOT_TOKEN) {
   console.error("BOT_TOKEN belum diset di environment / .env");
@@ -22,6 +28,22 @@ if (!BOT_TOKEN) {
 
 // Bot instance hanya untuk kirim pesan (tidak memanggil bot.start())
 const bot = new Bot(BOT_TOKEN);
+
+function verifyTrakteerSignature(rawBody, secret, headers) {
+  if (!secret) return true;
+  const sig =
+    headers["x-trakteer-signature"] ||
+    headers["X-Trakteer-Signature"] ||
+    "";
+  if (!sig) return false;
+
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(rawBody, "utf8")
+    .digest("hex");
+
+  return sig === expected;
+}
 
 /**
  * Handler HTTP untuk webhook Trakteer.
@@ -48,7 +70,23 @@ const server = http.createServer((req, res) => {
     res.setHeader("Content-Type", "application/json");
 
     try {
-      const data = body ? JSON.parse(body) : {};
+      const rawBody = body || "";
+
+      const okSig = verifyTrakteerSignature(
+        rawBody,
+        TRAKTEER_WEBHOOK_SECRET,
+        req.headers
+      );
+      if (!okSig) {
+        console.warn("[VPS] Trakteer webhook: invalid signature");
+        res.statusCode = 401;
+        res.end(
+          JSON.stringify({ status: "error", reason: "invalid_signature" })
+        );
+        return;
+      }
+
+      const data = rawBody ? JSON.parse(rawBody) : {};
       console.log("📥 [VPS] Trakteer webhook payload diterima:", data);
 
       const amount = Number(
@@ -94,8 +132,8 @@ const server = http.createServer((req, res) => {
         return;
       }
 
-      const days = Math.floor(amount / 1000);
-      if (days <= 0) {
+      const baseDays = Math.floor(amount / 1000);
+      if (baseDays <= 0) {
         res.statusCode = 200;
         res.end(
           JSON.stringify({
@@ -106,15 +144,36 @@ const server = http.createServer((req, res) => {
         return;
       }
 
-      await extendPremium(userId, days);
+      // Cek diskon aktif untuk user
+      let totalDays = baseDays;
+      let discountCode = null;
+      let bonusDays = 0;
+      const activeCode = await getUserDiscount(userId);
+      if (activeCode) {
+        const info = await getDiscountInfo(activeCode);
+        if (info && amount >= (info.min_amount || 0)) {
+          discountCode = info.code;
+          bonusDays = Math.max(
+            Math.floor((baseDays * Number(info.percent || 0)) / 100),
+            1
+          );
+          totalDays += bonusDays;
+          await markDiscountUsed(discountCode, userId);
+          await clearUserDiscount(userId);
+        }
+      }
+
+      await extendPremium(userId, totalDays);
       await markPaymentCodeUsed(code);
       await logPayment({
         userId,
         method: "trakteer",
         amount,
-        days,
+        days: totalDays,
         status: "approved",
-        wallet: "TRAKTEER",
+        wallet: discountCode
+          ? `TRAKTEER (disc ${discountCode} ${bonusDays}d)`
+          : "TRAKTEER",
         ocrText: "",
         code,
         txDatetime: null,
@@ -122,15 +181,22 @@ const server = http.createServer((req, res) => {
 
       try {
         const lang = await getUserLang(userId);
-        const msg =
+        const baseLine =
           lang === "en"
             ? `🎉 Thank you for supporting via Trakteer!\nAmount: Rp ${amount.toLocaleString(
                 "id-ID"
-              )}\nPremium extended by ${days} day(s).`
+              )}\nPremium extended by ${totalDays} day(s).`
             : `🎉 Terima kasih sudah mendukung via Trakteer!\nNominal: Rp ${amount.toLocaleString(
                 "id-ID"
-              )}\nPremium kamu ditambah ${days} hari.`;
-        await bot.api.sendMessage(userId, msg);
+              )}\nPremium kamu ditambah ${totalDays} hari.`;
+        const discLine =
+          discountCode && bonusDays > 0
+            ? lang === "en"
+              ? `\n\nIncluding bonus ${bonusDays} day(s) from discount code \`${discountCode}\`.`
+              : `\n\nTermasuk bonus ${bonusDays} hari dari kode diskon \`${discountCode}\`.`
+            : "";
+        const msg = baseLine + discLine;
+        await bot.api.sendMessage(userId, msg, { parse_mode: "Markdown" });
       } catch (err) {
         console.error(
           "[VPS] Gagal kirim notifikasi ke user dari webhook Trakteer:",
@@ -145,14 +211,21 @@ const server = http.createServer((req, res) => {
           `User ID: \`${userId}\``,
           `Status: APPROVED`,
           `Nominal: Rp ${amount.toLocaleString("id-ID")}`,
-          `Hari premium: ${days}`,
+          `Hari premium: ${totalDays}`,
           `Kode unik: ${code}`,
+        ];
+        if (discountCode && bonusDays > 0) {
+          logLines.push(
+            `Diskon: kode ${discountCode}, bonus ${bonusDays} hari`
+          );
+        }
+        logLines.push(
           "",
           "*Payload:*",
           "```",
           JSON.stringify(data, null, 2).slice(0, 1900),
-          "```",
-        ];
+          "```"
+        );
         const logText = logLines.join("\n");
         try {
           await bot.api.sendMessage(PAYMENT_LOG_CHAT_ID, logText, {
@@ -175,7 +248,7 @@ const server = http.createServer((req, res) => {
         JSON.stringify({
           status: "ok",
           user_id: userId,
-          days,
+          days: totalDays,
         })
       );
     } catch (err) {
@@ -186,6 +259,10 @@ const server = http.createServer((req, res) => {
   });
 });
 
+/**
+ * Handler HTTP untuk webhook Trakteer.
+ * Endpoint: POST /trakteer/webhook
+ */
 server.listen(WEBHOOK_PORT, () => {
   console.log(
     "🌐 [VPS] HTTP server webhook Trakteer listen di port",

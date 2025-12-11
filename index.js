@@ -29,6 +29,12 @@ const {
   getPendingPaymentCode,
   findUserByPaymentCode,
   markPaymentCodeUsed,
+  createDiscountCode,
+  getDiscountInfo,
+  assignDiscountToUser,
+  getUserDiscount,
+  clearUserDiscount,
+  markDiscountUsed,
 } = require("./db");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -624,6 +630,134 @@ async function main() {
 
   bot.command("premium", async (ctx) => {
     await handlePremium(ctx);
+  });
+
+  // Klaim & cek diskon
+  bot.command("discount", async (ctx) => {
+    const userId = ctx.from.id;
+    const lang = await getUserLang(userId);
+    const args = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+
+    if (args.length === 0) {
+      const code = await getUserDiscount(userId);
+      if (!code) {
+        const text =
+          lang === "en"
+            ? "ℹ️ You don't have any active discount code.\nAsk admin or use /discount CODE to claim one."
+            : "ℹ️ Kamu tidak punya kode diskon aktif.\nTanya admin atau gunakan /discount KODE untuk klaim.";
+        await ctx.reply(text);
+        return;
+      }
+      const info = await getDiscountInfo(code);
+      if (!info) {
+        await clearUserDiscount(userId);
+        const text =
+          lang === "en"
+            ? "ℹ️ Your discount code is no longer valid."
+            : "ℹ️ Kode diskonmu sudah tidak berlaku.";
+        await ctx.reply(text);
+        return;
+      }
+      const minLine =
+        info.min_amount && info.min_amount > 0
+          ? lang === "en"
+            ? `• Minimum amount: Rp ${info.min_amount.toLocaleString("id-ID")}`
+            : `• Minimal nominal: Rp ${info.min_amount.toLocaleString("id-ID")}`
+          : "";
+
+      const expLine = info.expire_at
+        ? lang === "en"
+          ? `• Expires at: ${new Date(info.expire_at).toLocaleString("en-US")}`
+          : `• Berlaku sampai: ${new Date(info.expire_at).toLocaleString(
+              "id-ID"
+            )}`
+        : lang === "en"
+        ? "• Expires at: (no expiry set)"
+        : "• Berlaku sampai: (tanpa batas waktu)";
+
+      const text =
+        lang === "en"
+          ? [
+              "💸 Your active discount:",
+              "",
+              `• Code: \`${info.code}\``,
+              `• Percent: ${info.percent}%`,
+              minLine,
+              expLine,
+              "",
+              "Use it on your next payment (manual or Trakteer).",
+            ]
+              .filter(Boolean)
+              .join("\n")
+          : [
+              "💸 Kode diskon aktifmu:",
+              "",
+              `• Kode: \`${info.code}\``,
+              `• Diskon: ${info.percent}%`,
+              minLine,
+              expLine,
+              "",
+              "Gunakan saat pembayaran berikutnya (manual atau Trakteer).",
+            ]
+              .filter(Boolean)
+              .join("\n");
+
+      await ctx.reply(text, { parse_mode: "Markdown" });
+      return;
+    }
+
+    const rawCode = args[0];
+    const info = await assignDiscountToUser(userId, rawCode);
+    if (!info) {
+      const text =
+        lang === "en"
+          ? "❌ Discount code is invalid, expired, or quota has been used."
+          : "❌ Kode diskon tidak valid, kadaluarsa, atau kuotanya sudah habis.";
+      await ctx.reply(text);
+      return;
+    }
+
+    const minLine =
+      info.min_amount && info.min_amount > 0
+        ? lang === "en"
+          ? `• Minimum amount: Rp ${info.min_amount.toLocaleString("id-ID")}`
+          : `• Minimal nominal: Rp ${info.min_amount.toLocaleString("id-ID")}`
+        : "";
+
+    const expLine = info.expire_at
+      ? lang === "en"
+        ? `• Expires at: ${new Date(info.expire_at).toLocaleString("en-US")}`
+        : `• Berlaku sampai: ${new Date(info.expire_at).toLocaleString(
+            "id-ID"
+          )}`
+      : lang === "en"
+      ? "• Expires at: (no expiry set)"
+      : "• Berlaku sampai: (tanpa batas waktu)";
+
+    const text =
+      lang === "en"
+        ? [
+            "✅ Discount code applied successfully.",
+            "",
+            `• Code: \`${info.code}\``,
+            `• Percent: ${info.percent}%`,
+            minLine,
+            expLine,
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : [
+            "✅ Kode diskon berhasil dipasang.",
+            "",
+            `• Kode: \`${info.code}\``,
+            `• Diskon: ${info.percent}%`,
+            minLine,
+            expLine,
+          ]
+            .filter(Boolean)
+            .join("\n");
+
+    await ctx.reply(text, { parse_mode: "Markdown" });
   });
 
   // Callback pembayaran manual/Trakteer

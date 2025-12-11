@@ -712,6 +712,227 @@ async function getPaymentHistory(userId, limit = 10) {
   return Array.isArray(data) ? data : [];
 }
 
+/** ========== DISCOUNT CODES ========== */
+/**
+ * Tabel yang direkomendasikan:
+ *
+ * create table if not exists discount_codes (
+ *   code text primary key,
+ *   percent int not null,
+ *   max_uses int not null default 0,
+ *   used int not null default 0,
+ *   min_amount bigint not null default 0,
+ *   expire_at timestamptz,
+ *   created_at timestamptz default now(),
+ *   created_by bigint
+ * );
+ *
+ * create table if not exists user_discounts (
+ *   user_id bigint primary key,
+ *   code text not null,
+ *   created_at timestamptz default now()
+ * );
+ */
+
+function normalizeDiscountCode(raw) {
+  if (!raw) return "";
+  return String(raw).toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+async function createDiscountCode({
+  rawCode,
+  percent,
+  maxUses,
+  validHours,
+  minAmount,
+  createdBy,
+}) {
+  const code = normalizeDiscountCode(rawCode);
+  if (!code) {
+    throw new Error("Invalid discount code");
+  }
+
+  let p = Number(percent);
+  if (!Number.isFinite(p)) p = 0;
+  if (p < 1) p = 1;
+  if (p > 100) p = 100;
+
+  let max = Number(maxUses);
+  if (!Number.isFinite(max) || max < 0) max = 0;
+
+  let minAmt = Number(minAmount);
+  if (!Number.isFinite(minAmt) || minAmt < 0) minAmt = 0;
+
+  const now = new Date();
+  let expireAt = null;
+  const hours = Number(validHours);
+  if (Number.isFinite(hours) && hours > 0) {
+    expireAt = new Date(now.getTime() + hours * 3600 * 1000).toISOString();
+  }
+
+  const payload = {
+    code,
+    percent: p,
+    max_uses: max,
+    used: 0,
+    min_amount: minAmt,
+    expire_at: expireAt,
+    created_at: now.toISOString(),
+    created_by: createdBy || null,
+  };
+
+  const { error } = await supabase.from("discount_codes").upsert(payload, {
+    onConflict: "code",
+  });
+
+  if (error) {
+    console.error("Supabase createDiscountCode error:", error.message);
+    throw new Error(error.message);
+  }
+
+  return payload;
+}
+
+/**
+ * Mengambil info diskon jika masih berlaku.
+ */
+async function getDiscountInfo(rawCode) {
+  const code = normalizeDiscountCode(rawCode);
+  if (!code) return null;
+
+  const { data, error } = await supabase
+    .from("discount_codes")
+    .select(
+      "code,percent,max_uses,used,min_amount,expire_at,created_at,created_by,disabled"
+    )
+    .eq("code", code)
+    .limit(1)
+    .maybeSingle();
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase getDiscountInfo error:", error.message);
+    return null;
+  }
+  if (!data) return null;
+
+  const now = new Date();
+  const disabled = data.disabled ? true : false;
+  if (disabled) return null;
+
+  if (data.expire_at) {
+    const exp = new Date(data.expire_at);
+    if (Number.isFinite(exp.getTime()) && exp < now) {
+      return null;
+    }
+  }
+
+  const max = Number(data.max_uses || 0);
+  const used = Number(data.used || 0);
+  if (max > 0 && used >= max) {
+    return null;
+  }
+
+  return {
+    code: data.code,
+    percent: Number(data.percent || 0),
+    max_uses: max,
+    used,
+    min_amount: Number(data.min_amount || 0),
+    expire_at: data.expire_at,
+    created_at: data.created_at,
+    created_by: data.created_by,
+  };
+}
+
+/**
+ * Mengaitkan diskon ke user jika kode masih berlaku.
+ */
+async function assignDiscountToUser(userId, rawCode) {
+  const info = await getDiscountInfo(rawCode);
+  if (!info) return null;
+
+  const payload = {
+    user_id: userId,
+    code: info.code,
+    created_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase
+    .from("user_discounts")
+    .upsert(payload, { onConflict: "user_id" });
+
+  if (error) {
+    console.error("Supabase assignDiscountToUser error:", error.message);
+    return null;
+  }
+
+  return info;
+}
+
+/**
+ * Mengambil kode diskon aktif untuk user (jika ada dan masih valid).
+ */
+async function getUserDiscount(userId) {
+  const { data, error } = await supabase
+    .from("user_discounts")
+    .select("code")
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase getUserDiscount error:", error.message);
+    return null;
+  }
+  if (!data || !data.code) return null;
+
+  const info = await getDiscountInfo(data.code);
+  if (!info) {
+    // kode sudah tidak valid, bersihkan
+    await clearUserDiscount(userId);
+    return null;
+  }
+
+  return info.code;
+}
+
+async function clearUserDiscount(userId) {
+  const { error } = await supabase
+    .from("user_discounts")
+    .delete()
+    .eq("user_id", userId);
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase clearUserDiscount error:", error.message);
+  }
+}
+
+/**
+ * Menandai diskon telah terpakai (naikkan counter used).
+ */
+async function markDiscountUsed(rawCode, userId = null) {
+  const code = normalizeDiscountCode(rawCode);
+  if (!code) return;
+
+  const { error } = await supabase.rpc("increment_discount_used", {
+    p_code: code,
+  });
+
+  if (error && error.code !== "PGRST116") {
+    // Jika fungsi RPC tidak ada, fallback: update manual
+    console.error(
+      "Supabase markDiscountUsed rpc error, fallback to update:",
+      error.message
+    );
+    const { error: upErr } = await supabase
+      .from("discount_codes")
+      .update({ used: supabase.rpc("increment", { col: "used" }) })
+      .eq("code", code);
+    if (upErr && upErr.code !== "PGRST116") {
+      console.error("Supabase markDiscountUsed fallback error:", upErr.message);
+    }
+  }
+}
+
 /** ========== PAYMENT CODES HELPERS ========== */
 
 async function findUserByPaymentCode(code, methodFilter = null) {
@@ -779,9 +1000,16 @@ module.exports = {
   // payments log
   logPayment,
   getPaymentHistory,
-  // payment codes
+  // payment codes & discounts
   savePaymentCode,
   getPendingPaymentCode,
   findUserByPaymentCode,
   markPaymentCodeUsed,
+  // discounts
+  createDiscountCode,
+  getDiscountInfo,
+  assignDiscountToUser,
+  getUserDiscount,
+  clearUserDiscount,
+  markDiscountUsed,
 };
