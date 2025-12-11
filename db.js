@@ -538,6 +538,42 @@ async function savePaymentCode(code, userId, method = "any") {
   }
 }
 
+/**
+ * Mengambil kode pembayaran terakhir yang belum digunakan (used = false)
+ * untuk user tertentu. Jika methodFilter diisi, hanya ambil kode dengan
+ * method tersebut atau 'any'.
+ */
+async function getPendingPaymentCode(userId, methodFilter = null) {
+  if (!userId) return null;
+
+  let query = supabase
+    .from("payment_codes")
+    .select("code, used, method, created_at")
+    .eq("user_id", userId)
+    .eq("used", false)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { data, error } = await query;
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase getPendingPaymentCode error:", error.message);
+    return null;
+  }
+  if (!data) return null;
+
+  if (
+    methodFilter &&
+    data.method !== "any" &&
+    data.method !== methodFilter
+  ) {
+    return null;
+  }
+
+  return data.code || null;
+}
+
 async function findUserByPaymentCode(code, method = null) {
   if (!code) return null;
 
@@ -720,6 +756,7 @@ module.exports = {
   logPayment,
   // payment codes
   savePaymentCode,
+  getPendingPaymentCode,
   findUserByPaymentCode,
   markPaymentCodeUsed,
 };

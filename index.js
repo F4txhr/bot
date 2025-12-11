@@ -26,6 +26,7 @@ const {
   getPaymentSession,
   logPayment,
   savePaymentCode,
+  getPendingPaymentCode,
   findUserByPaymentCode,
   markPaymentCodeUsed,
 } = require("./db");
@@ -453,16 +454,37 @@ async function handlePremium(ctx) {
     return;
   }
 
-  const code = generatePaymentCode();
-  // Simpan mapping kode -> user untuk manual & trakteer (dipakai webhook nanti)
-  try {
-    await savePaymentCode(code, userId, "any");
-  } catch (err) {
-    console.error("Gagal savePaymentCode:", err.message);
+  // Cek apakah user sudah punya kode unik yang belum dipakai (misal transaksi sebelumnya belum selesai)
+  let code = await getPendingPaymentCode(userId, "trakteer");
+  const reusedExisting = !!code;
+
+  if (!code) {
+    code = generatePaymentCode();
+    // Simpan mapping kode -> user untuk manual & trakteer (dipakai webhook nanti)
+    try {
+      await savePaymentCode(code, userId, "any");
+    } catch (err) {
+      console.error("Gagal savePaymentCode:", err.message);
+    }
   }
 
   let text;
   if (lang === "en") {
+    const reminder = reusedExisting
+      ? [
+          "⚠️ It looks like you have a previous transaction that has not been completed yet.",
+          "Please use the same *unique code* below to finish your payment:",
+          "",
+          `\`${code}\``,
+          "",
+        ]
+      : [
+          "Use the *unique code* below in your payment note/message:",
+          "",
+          `\`${code}\``,
+          "",
+        ];
+
     text = [
       premium
         ? "💎 You are currently a *premium* user."
@@ -472,13 +494,25 @@ async function handlePremium(ctx) {
       "• Rp 3.000 → 3 days",
       "• Rp 10.000 → 10 days",
       "",
-      "Use the *unique code* below in your payment note/message:",
-      "",
-      `\`${code}\``,
-      "",
+      ...reminder,
       "Then choose one of the payment methods below:",
     ].join("\n");
   } else {
+    const reminder = reusedExisting
+      ? [
+          "⚠️ Sepertinya kamu masih punya transaksi sebelumnya yang belum diselesaikan.",
+          "Silakan gunakan *kode unik* yang sama di bawah ini untuk menyelesaikan pembayaran:",
+          "",
+          `\`${code}\``,
+          "",
+        ]
+      : [
+          "Gunakan *kode unik* di bawah ini pada catatan/pesan pembayaran:",
+          "",
+          `\`${code}\``,
+          "",
+        ];
+
     text = [
       premium
         ? "💎 Kamu saat ini adalah pengguna *premium*."
@@ -488,10 +522,7 @@ async function handlePremium(ctx) {
       "• Rp 3.000 → 3 hari",
       "• Rp 10.000 → 10 hari",
       "",
-      "Gunakan *kode unik* di bawah ini pada catatan/pesan pembayaran:",
-      "",
-      `\`${code}\``,
-      "",
+      ...reminder,
       "Lalu pilih salah satu metode pembayaran di bawah:",
     ].join("\n");
   }
