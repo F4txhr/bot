@@ -913,24 +913,50 @@ async function markDiscountUsed(rawCode, userId = null) {
   const code = normalizeDiscountCode(rawCode);
   if (!code) return;
 
-  const { error } = await supabase.rpc("increment_discount_used", {
-    p_code: code,
-  });
+  // naikan counter used dengan update sederhana
+  const { data, error } = await supabase
+    .from("discount_codes")
+    .select("used")
+    .eq("code", code)
+    .limit(1)
+    .maybeSingle();
 
   if (error && error.code !== "PGRST116") {
-    // Jika fungsi RPC tidak ada, fallback: update manual
-    console.error(
-      "Supabase markDiscountUsed rpc error, fallback to update:",
-      error.message
-    );
-    const { error: upErr } = await supabase
-      .from("discount_codes")
-      .update({ used: supabase.rpc("increment", { col: "used" }) })
-      .eq("code", code);
-    if (upErr && upErr.code !== "PGRST116") {
-      console.error("Supabase markDiscountUsed fallback error:", upErr.message);
-    }
+    console.error("Supabase markDiscountUsed select error:", error.message);
+    return;
   }
+  if (!data) return;
+
+  const current = Number(data.used || 0) || 0;
+
+  const { error: upErr } = await supabase
+    .from("discount_codes")
+    .update({ used: current + 1 })
+    .eq("code", code);
+
+  if (upErr && upErr.code !== "PGRST116") {
+    console.error("Supabase markDiscountUsed update error:", upErr.message);
+  }
+}
+
+/**
+ * Men-disable atau mengaktifkan ulang kode diskon.
+ */
+async function disableDiscountCode(rawCode, disabled = true) {
+  const code = normalizeDiscountCode(rawCode);
+  if (!code) return false;
+
+  const { error } = await supabase
+    .from("discount_codes")
+    .update({ disabled })
+    .eq("code", code);
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase disableDiscountCode error:", error.message);
+    return false;
+  }
+
+  return true;
 }
 
 /** ========== PAYMENT CODES HELPERS ========== */
@@ -1012,4 +1038,5 @@ module.exports = {
   getUserDiscount,
   clearUserDiscount,
   markDiscountUsed,
+  disableDiscountCode,
 };

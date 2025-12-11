@@ -35,6 +35,7 @@ const {
   getUserDiscount,
   clearUserDiscount,
   markDiscountUsed,
+  disableDiscountCode,
 } = require("./db");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -1455,6 +1456,45 @@ async function main() {
     }
   });
 
+  // Admin: disable/enable discount code
+  bot.command("discount_disable", async (ctx) => {
+    const adminId = ctx.from.id;
+    if (!isAdmin(adminId)) {
+      return;
+    }
+    const lang = await getUserLang(adminId);
+    const args = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+    // /discount_disable CODE [on|off]
+    if (args.length < 1) {
+      const msg =
+        lang === "en"
+          ? "Usage: /discount_disable CODE [on|off]\nExample: /discount_disable DISC20 off"
+          : "Cara pakai: /discount_disable KODE [on|off]\nContoh: /discount_disable DISC20 off";
+      await ctx.reply(msg);
+      return;
+    }
+
+    const rawCode = args[0];
+    const flag = (args[1] || "off").toLowerCase();
+    const disabled = flag !== "on";
+
+    const ok = await disableDiscountCode(rawCode, disabled);
+    if (!ok) {
+      const msg =
+        lang === "en"
+          ? "❌ Failed to update discount code (maybe not found)."
+          : "❌ Gagal mengubah status kode diskon (mungkin tidak ditemukan).";
+      await ctx.reply(msg);
+      return;
+    }
+
+    const msg =
+      lang === "en"
+        ? `✅ Discount code ${rawCode} is now ${disabled ? "DISABLED" : "ENABLED"}.`
+        : `✅ Kode diskon ${rawCode} sekarang ${disabled ? "DINONAKTIFKAN" : "DIAKTIFKAN"}.`;
+    await ctx.reply(msg);
+  });
+
   // Admin: grant premium manually
   bot.command("grantpremium", async (ctx) => {
     const adminId = ctx.from.id;
@@ -1541,11 +1581,11 @@ async function main() {
         const within24h =
           diffHours != null && Number.isFinite(diffHours) && diffHours <= 24;
 
-        let days = computePremiumDaysFromAmount(maxAmount);
+        let baseDays = computePremiumDaysFromAmount(maxAmount);
         let status = "pending";
 
         // Verifikasi berbeda untuk DANA vs GoPay
-        if (days > 0 && within24h) {
+        if (baseDays > 0 && within24h) {
           if (walletType === "GOPAY") {
             const { name, last4 } = parseGopayRecipient(ocrText);
             const expectedLast4 = E_WALLET_NUMBER.slice(-4);
@@ -1560,25 +1600,47 @@ async function main() {
 
             if (nameOk && last4Ok) {
               status = "approved";
-              await extendPremium(userId, days);
             }
           } else {
             // Default: gunakan verifikasi nomor+nama seperti DANA
             const hasWalletInfo = containsWalletInfo(ocrText);
             if (hasWalletInfo) {
               status = "approved";
-              await extendPremium(userId, days);
             }
           }
+        }
+
+        let totalDays = baseDays;
+        let discountCode = null;
+        let bonusDays = 0;
+        if (status === "approved" && baseDays > 0) {
+          const activeCode = await getUserDiscount(userId);
+          if (activeCode) {
+            const info = await getDiscountInfo(activeCode);
+            if (info && maxAmount >= (info.min_amount || 0)) {
+              discountCode = info.code;
+              bonusDays = Math.max(
+                Math.floor((baseDays * Number(info.percent || 0)) / 100),
+                1
+              );
+              totalDays += bonusDays;
+              await markDiscountUsed(discountCode, userId);
+              await clearUserDiscount(userId);
+            }
+          }
+
+          await extendPremium(userId, totalDays);
         }
 
         await logPayment({
           userId,
           method: "manual",
           amount: maxAmount || 0,
-          days: days || 0,
+          days: totalDays || 0,
           status,
-          wallet: `${walletType} | ${E_WALLET_NAME} ${E_WALLET_NUMBER}`,
+          wallet: discountCode
+            ? `${walletType} (disc ${discountCode} ${bonusDays}d) | ${E_WALLET_NAME} ${E_WALLET_NUMBER}`
+            : `${walletType} | ${E_WALLET_NAME} ${E_WALLET_NUMBER}`,
           ocrText,
           code: codes.length ? codes[0] : "",
           txDatetime: txDate ? txDate.toISOString() : null,
@@ -1623,16 +1685,23 @@ async function main() {
         }
 
         if (status === "approved") {
-          const msgText =
+          const baseMsg =
             lang === "en"
               ? `✅ Payment detected successfully.\nAmount: Rp ${maxAmount.toLocaleString(
                   "id-ID"
-                )}\nPremium extended by ${days} day(s).`
+                )}\nPremium extended by ${totalDays} day(s).`
               : `✅ Pembayaran berhasil terdeteksi.\nNominal: Rp ${maxAmount.toLocaleString(
                   "id-ID"
-                )}\nPremium kamu ditambah ${days} hari.`;
+                )}\nPremium kamu ditambah ${totalDays} hari.`;
 
-          await ctx.reply(msgText);
+          const discMsg =
+            discountCode && bonusDays > 0
+              ? lang === "en"
+                ? `\n\nIncluding bonus ${bonusDays} day(s) from discount code ${discountCode}.`
+                : `\n\nTermasuk bonus ${bonusDays} hari dari kode diskon ${discountCode}.`
+              : "";
+
+          await ctx.reply(baseMsg + discMsg);
         } else {
           const linesId = [
             "⚠️ Pembayaranmu belum bisa diverifikasi otomatis.",
