@@ -612,65 +612,71 @@ async function main() {
     const lang = await getUserLang(userId);
     const admin = isAdmin(userId);
 
-    const kb = new InlineKeyboard()
-      .text(lang === "en" ? "🔍 Search" : "🔍 Cari", "help_search")
-      .text(lang === "en" ? "⛔ Stop" : "⛔ Stop", "help_stop")
-      .row()
-      .text(lang === "en" ? "➡️ Next" : "➡️ Next", "help_next")
-      .text(lang === "en" ? "⚠️ Report" : "⚠️ Report", "help_report")
-      .row()
-      .text(lang === "en" ? "🌐 Language" : "🌐 Bahasa", "help_lang")
-      .text(lang === "en" ? "🔗 Profile" : "🔗 Profil", "help_showid")
-      .row()
-      .text(lang === "en" ? "💎 Premium" : "💎 Premium", "help_premium")
-      .text(lang === "en" ? "📊 Stats" : "📊 Statistik", "help_stats")
-      .row()
-      .text(lang === "en" ? "💳 Payments" : "💳 Pembayaran", "help_pay")
-      .text(lang === "en" ? "💸 Discount" : "💸 Diskon", "help_discount");
+    if (lang === "en") {
+      const lines = [
+        "❓ *ShadowChat Help*",
+        "",
+        "*User commands:*",
+        "/start - show welcome message",
+        "/help - show this help",
+        "/search - find a random chat partner",
+        "/stop - end the current chat",
+        "/next - end current chat and search for another partner",
+        "/report - report your current partner",
+        "/lang - change language (id/en)",
+        "/showid - share your profile link with partner",
+        "/premium - check premium status & payment methods",
+        "/stats - view your chat statistics",
+        "/payhistory - view your payment history",
+        "/discount - check or claim a discount code",
+        "/pending - show pending Trakteer transaction (if any)",
+        "",
+      ];
 
-    if (admin) {
-      kb.row().text(
-        lang === "en" ? "🛠 Admin commands" : "🛠 Perintah admin",
-        "help_admin"
-      );
+      if (admin) {
+        lines.push(
+          "*Admin commands:*",
+          "/payment on|off [manual|trakteer] - enable/disable payment methods",
+          "/grantpremium <user_id> <days> - manually extend premium",
+          "/discount_add CODE PERCENT [MAX_USES] [HOURS] [MIN_AMOUNT] - create discount code",
+          "/payhistory <user_id> [limit] - view another user's payment history"
+        );
+      }
+
+      await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
+    } else {
+      const lines = [
+        "❓ *Bantuan ShadowChat*",
+        "",
+        "*Perintah untuk user:*",
+        "/start - tampilkan pesan sambutan",
+        "/help - tampilkan bantuan ini",
+        "/search - cari pasangan ngobrol anonim",
+        "/stop - hentikan obrolan yang sedang berjalan",
+        "/next - hentikan obrolan dan cari pasangan baru",
+        "/report - laporkan pasangan yang melanggar",
+        "/lang - ganti bahasa (id/en)",
+        "/showid - kirim link profilmu ke pasangan",
+        "/premium - cek status premium & metode pembayaran",
+        "/stats - lihat statistik chat kamu",
+        "/payhistory - lihat riwayat pembayaranmu",
+        "/discount - cek atau klaim kode diskon",
+        "/pending - lihat transaksi Trakteer yang masih tertunda (jika ada)",
+        "",
+      ];
+
+      if (admin) {
+        lines.push(
+          "*Perintah admin:*",
+          "/payment on|off [manual|trakteer] - hidup/matikan metode pembayaran",
+          "/grantpremium <user_id> <hari> - tambah masa premium user secara manual",
+          "/discount_add KODE PERSEN [MAX_USES] [JAM] [MIN_NOMINAL] - buat kode diskon",
+          "/payhistory <user_id> [limit] - lihat riwayat pembayaran user lain"
+        );
+      }
+
+      await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
     }
-
-    const textId = [
-      "❓ *Bantuan ShadowChat*",
-      "",
-      "Gunakan tombol di bawah untuk melihat penjelasan tiap fitur.",
-      "",
-      "Beberapa perintah penting:",
-      "• /search — cari pasangan ngobrol anonim",
-      "• /stop — hentikan obrolan yang sedang berjalan",
-      "• /next — cari pasangan lain",
-      "• /report — laporkan pasangan yang melanggar",
-      "• /premium — status & cara beli premium",
-      "• /stats — statistik chat kamu",
-      "• /payhistory — riwayat pembayaranmu",
-      "• /discount — cek / klaim kode diskon",
-    ].join("\n");
-
-    const textEn = [
-      "❓ *ShadowChat Help*",
-      "",
-      "Use the buttons below to see details for each feature.",
-      "",
-      "Some important commands:",
-      "• /search — find a random chat partner",
-      "• /stop — stop the current chat",
-      "• /next — find another partner",
-      "• /report — report your current partner",
-      "• /premium — premium status & how to buy",
-      "• /stats — your chat stats",
-      "• /payhistory — your payment history",
-      "• /discount — check / claim discount code",
-    ].join("\n");
-
-    await ctx.reply(lang === "en" ? textEn : textId, {
-      parse_mode: "Markdown",
-      reply_markup: kb,
-    });
   });
 
   bot.command("search", async (ctx) => {
