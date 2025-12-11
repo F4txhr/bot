@@ -688,6 +688,30 @@ async function logPayment({
   }
 }
 
+/**
+ * Mengambil riwayat pembayaran user dari tabel payments.
+ * Hanya mengembalikan beberapa field yang relevan.
+ */
+async function getPaymentHistory(userId, limit = 10) {
+  if (!userId) return [];
+
+  const { data, error } = await supabase
+    .from("payments")
+    .select(
+      "method,amount,days,status,wallet,code,tx_datetime,created_at"
+    )
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase getPaymentHistory error:", error.message);
+    return [];
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
 /** ========== PAYMENT CODES HELPERS ========== */
 
 async function findUserByPaymentCode(code, methodFilter = null) {
@@ -754,6 +778,7 @@ module.exports = {
   getPaymentSession,
   // payments log
   logPayment,
+  getPaymentHistory,
   // payment codes
   savePaymentCode,
   getPendingPaymentCode,

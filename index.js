@@ -24,6 +24,7 @@ const {
   setPaymentSession,
   getPaymentSession,
   logPayment,
+  getPaymentHistory,
   savePaymentCode,
   getPendingPaymentCode,
   findUserByPaymentCode,
@@ -922,7 +923,9 @@ async function main() {
       `• Total obrolan (search): ${stats.total_chats || 0}`,
       premium ? "• Status: Premium ✅" : "• Status: Gratis",
       stats.last_active
-        ? `• Terakhir aktif: ${new Date(stats.last_active).toLocaleString("id-ID")}`
+        ? `• Terakhir aktif: ${new Date(stats.last_active).toLocaleString(
+            "id-ID"
+          )}`
         : "• Terakhir aktif: -",
     ];
 
@@ -931,11 +934,125 @@ async function main() {
       `• Total chats (search): ${stats.total_chats || 0}`,
       premium ? "• Status: Premium ✅" : "• Status: Free",
       stats.last_active
-        ? `• Last active: ${new Date(stats.last_active).toLocaleString("en-US")}`
+        ? `• Last active: ${new Date(stats.last_active).toLocaleString(
+            "en-US"
+          )}`
         : "• Last active: -",
     ];
 
     await ctx.reply(lang === "en" ? linesEn.join("\n") : linesId.join("\n"));
+  });
+
+  // Riwayat pembayaran user
+  bot.command("payhistory", async (ctx) => {
+    const userId = ctx.from.id;
+    const lang = await getUserLang(userId);
+
+    // Admin boleh melihat history user lain: /payhistory <user_id> [limit]
+    const args = (ctx.match || "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+
+    let targetUserId = userId;
+    let limit = 5;
+
+    if (args.length >= 1 && isAdmin(userId)) {
+      const idArg = Number(args[0]);
+      if (!Number.isNaN(idArg) && idArg > 0) {
+        targetUserId = idArg;
+      }
+      if (args.length >= 2) {
+        const limArg = Number(args[1]);
+        if (!Number.isNaN(limArg) && limArg > 0 && limArg <= 20) {
+          limit = limArg;
+        }
+      }
+    }
+
+    const history = await getPaymentHistory(targetUserId, limit);
+
+    if (!history.length) {
+      const text =
+        lang === "en"
+          ? targetUserId === userId
+            ? "ℹ️ You don't have any recorded payments yet."
+            : `ℹ️ User ${targetUserId} doesn't have any recorded payments.`
+          : targetUserId === userId
+          ? "ℹ️ Kamu belum punya riwayat pembayaran."
+          : `ℹ️ User ${targetUserId} belum punya riwayat pembayaran.`;
+      await ctx.reply(text);
+      return;
+    }
+
+    const lines = [];
+    if (lang === "en") {
+      lines.push(
+        targetUserId === userId
+          ? "💳 Your recent payment history:"
+          : `💳 Recent payment history for user ${targetUserId}:`
+      );
+    } else {
+      lines.push(
+        targetUserId === userId
+          ? "💳 Riwayat pembayaran terakhirmu:"
+          : `💳 Riwayat pembayaran terakhir untuk user ${targetUserId}:`
+      );
+    }
+
+    for (const item of history) {
+      const created = item.created_at
+        ? new Date(item.created_at).toLocaleString(
+            lang === "en" ? "en-US" : "id-ID"
+          )
+        : "-";
+      const statusLine =
+        lang === "en"
+          ? `• Status: ${item.status || "?"}`
+          : `• Status: ${item.status || "?"}`;
+      const methodLine =
+        lang === "en"
+          ? `• Method: ${item.method || "-"}`
+          : `• Metode: ${item.method || "-"}`;
+      const amountLine =
+        lang === "en"
+          ? `• Amount: Rp ${
+              item.amount ? item.amount.toLocaleString("id-ID") : 0
+            }`
+          : `• Nominal: Rp ${
+              item.amount ? item.amount.toLocaleString("id-ID") : 0
+            }`;
+      const daysLine =
+        lang === "en"
+          ? `• Days: ${item.days || 0}`
+          : `• Hari: ${item.days || 0}`;
+      const codeLine =
+        item.code && item.code.length
+          ? lang === "en"
+            ? `• Code: ${item.code}`
+            : `• Kode: ${item.code}`
+          : "";
+      const dateLine =
+        lang === "en"
+          ? `• Date: ${created}`
+          : `• Tanggal: ${created}`;
+
+      lines.push(
+        [
+          "",
+          dateLine,
+          methodLine,
+          amountLine,
+          daysLine,
+          statusLine,
+          codeLine,
+        ]
+          .filter(Boolean)
+          .join("\n")
+      );
+    }
+
+    await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
   });
 
   bot.command("payment", async (ctx) => {
