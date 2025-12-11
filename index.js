@@ -643,7 +643,7 @@ async function main() {
         );
       }
 
-      await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
+      await ctx.reply(lines.join("\n"));
     } else {
       const lines = [
         "❓ *Bantuan ShadowChat*",
@@ -675,7 +675,7 @@ async function main() {
         );
       }
 
-      await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
+      await ctx.reply(lines.join("\n"));
     }
   });
 
