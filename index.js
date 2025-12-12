@@ -407,7 +407,7 @@ async function handleReport(ctx) {
     "🛑 *Message Report*",
     "",
     `Reporter: \`${userId}\``,
-    `Partner (if any): \`${partnerId || "-"}\``,
+    `Reported user: \`${partnerId || "-"}\``,
     `Type: ${messageType}`,
     similarCount > 0
       ? `Similar reports with same OCR hash (excluding this): ${similarCount}`
@@ -419,7 +419,7 @@ async function handleReport(ctx) {
     "🛑 *Laporan Pesan*",
     "",
     `Pelapor: \`${userId}\``,
-    `Partner (jika ada): \`${partnerId || "-"}\``,
+    `Terlapor: \`${partnerId || "-"}\``,
     `Tipe: ${messageType}`,
     similarCount > 0
       ? `Jumlah laporan lain dengan OCR hash sama (di luar ini): ${similarCount}`
@@ -452,6 +452,12 @@ async function handleReport(ctx) {
   const textAdminEn = baseLinesEn.join("\n");
   const textAdminId = baseLinesId.join("\n");
 
+  const actionKeyboard = partnerId
+    ? new InlineKeyboard()
+        .text("🚫 Ban", `admin_ban:${partnerId}`)
+        .text("✅ Unban", `admin_unban:${partnerId}`)
+    : undefined;
+
   // Kirim ke grup admin (REPORT_LOG_CHAT_ID)
   if (REPORT_LOG_CHAT_ID) {
     try {
@@ -460,6 +466,7 @@ async function handleReport(ctx) {
         lang === "en" ? textAdminEn : textAdminId,
         {
           parse_mode: "Markdown",
+          reply_markup: actionKeyboard,
           message_thread_id:
             REPORT_LOG_TOPIC_ID && REPORT_LOG_TOPIC_ID > 0
               ? REPORT_LOG_TOPIC_ID
@@ -1321,16 +1328,17 @@ async function main() {
 
   bot.callbackQuery(/^pay_admin_reject:(\d+)$/, async (ctx) => {
     const adminId = ctx.from.id;
+    const lang = await getUserLang(adminId);
+
     if (!isAdmin(adminId)) {
       await ctx.answerCallbackQuery({
-        text: "Only admins can reject.",
+        text: lang === "en" ? "Admin only." : "Khusus admin.",
         show_alert: true,
       });
       return;
     }
-    const userId = Number(ctx.match[1]);
-    const lang = await getUserLang(adminId);
 
+    const userId = Number(ctx.match[1]);
     const message = ctx.callbackQuery.message;
     const originalCaption = (message && message.caption) || "";
     if (
@@ -1360,14 +1368,10 @@ async function main() {
     try {
       const msg = ctx.callbackQuery.message;
       if (msg) {
-        await bot.api.editMessageCaption(
-          msg.chat.id,
-          msg.message_id,
-          {
-            caption: originalCaption + rejectedNote,
-            reply_markup: undefined,
-          }
-        );
+        await bot.api.editMessageCaption(msg.chat.id, msg.message_id, {
+          caption: originalCaption + rejectedNote,
+          reply_markup: undefined,
+        });
       }
     } catch (err) {
       console.error("Gagal edit caption reject:", err.message);
@@ -1383,6 +1387,118 @@ async function main() {
     } catch (err) {
       console.error("Gagal kirim notifikasi reject ke user:", err.message);
     }
+  });
+
+  // Admin actions from report log group/DM
+  bot.callbackQuery(/^admin_ban:(\d+)$/, async (ctx) => {
+    const adminId = ctx.from.id;
+    const lang = await getUserLang(adminId);
+
+    if (!isAdmin(adminId)) {
+      await ctx.answerCallbackQuery({
+        text: lang === "en" ? "Admin only." : "Khusus admin.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    const targetId = Number(ctx.match[1]);
+    await banUser(targetId, "Banned by admin from report");
+    await clearPair(targetId);
+
+    await ctx.answerCallbackQuery({
+      text: lang === "en" ? "User banned." : "User diblokir.",
+      show_alert: false,
+    });
+
+    const msg = ctx.callbackQuery.message;
+    if (msg) {
+      try {
+        await bot.api.editMessageReplyMarkup(msg.chat.id, msg.message_id, {
+          reply_markup: undefined,
+        });
+      } catch (_) {}
+      try {
+        await bot.api.sendMessage(
+          msg.chat.id,
+          lang === "en"
+            ? `✅ Banned user ${targetId}.`
+            : `✅ Memblokir user ${targetId}.`,
+          {
+            reply_to_message_id: msg.message_id,
+            message_thread_id:
+              REPORT_LOG_TOPIC_ID && REPORT_LOG_TOPIC_ID > 0
+                ? REPORT_LOG_TOPIC_ID
+                : undefined,
+          }
+        );
+      } catch (_) {}
+    }
+
+    try {
+      const uLang = await getUserLang(targetId);
+      await bot.api.sendMessage(
+        targetId,
+        uLang === "en"
+          ? "❌ Your account has been blocked by admin."
+          : "❌ Akunmu telah diblokir oleh admin."
+      );
+    } catch (_) {}
+  });
+
+  bot.callbackQuery(/^admin_unban:(\d+)$/, async (ctx) => {
+    const adminId = ctx.from.id;
+    const lang = await getUserLang(adminId);
+
+    if (!isAdmin(adminId)) {
+      await ctx.answerCallbackQuery({
+        text: lang === "en" ? "Admin only." : "Khusus admin.",
+        show_alert: true,
+      });
+      return;
+    }
+
+    const targetId = Number(ctx.match[1]);
+    await unbanUser(targetId);
+
+    await ctx.answerCallbackQuery({
+      text: lang === "en" ? "User unbanned." : "User dibuka blokir.",
+      show_alert: false,
+    });
+
+    const msg = ctx.callbackQuery.message;
+    if (msg) {
+      try {
+        await bot.api.editMessageReplyMarkup(msg.chat.id, msg.message_id, {
+          reply_markup: undefined,
+        });
+      } catch (_) {}
+      try {
+        await bot.api.sendMessage(
+          msg.chat.id,
+          lang === "en"
+            ? `✅ Unbanned user ${targetId}.`
+            : `✅ Membuka blokir user ${targetId}.`,
+          {
+            reply_to_message_id: msg.message_id,
+            message_thread_id:
+              REPORT_LOG_TOPIC_ID && REPORT_LOG_TOPIC_ID > 0
+                ? REPORT_LOG_TOPIC_ID
+                : undefined,
+          }
+        );
+      } catch (_) {}
+    }
+
+    try {
+      const uLang = await getUserLang(targetId);
+      await bot.api.sendMessage(
+        targetId,
+        uLang === "en"
+          ? "✅ Your account has been unblocked by admin."
+          : "✅ Akunmu telah dibuka blokirnya oleh admin."
+      );
+    } catch (_) {}
   });
 
   bot.command("stats", async (ctx) => {
