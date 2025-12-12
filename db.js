@@ -386,6 +386,8 @@ async function incrementChatCount(userId) {
 }
 
 async function getUserStats(userId) {
+  if (!userId) return { total_chats: 0, last_active: null, premium_expires_at: null };
+
   const { data, error } = await supabase
     .from("user_stats")
     .select("total_chats,last_active")
@@ -395,17 +397,28 @@ async function getUserStats(userId) {
 
   if (error && error.code !== "PGRST116") {
     console.error("Supabase getUserStats error:", error.message);
-    return { total_chats: 0, last_active: null };
+    return { total_chats: 0, last_active: null, premium_expires_at: null };
   }
 
-  if (!data) {
-    return { total_chats: 0, last_active: null };
-  }
-
-  return {
-    total_chats: data.total_chats || 0,
-    last_active: data.last_active || null,
+  const base = {
+    total_chats: data && data.total_chats ? Number(data.total_chats) : 0,
+    last_active: data && data.last_active ? data.last_active : null,
+    premium_expires_at: null,
   };
+
+  // ambil expires premium dari tabel premium
+  const { data: prem, error: premErr } = await supabase
+    .from("premium")
+    .select("expires_at")
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+
+  if (!premErr && prem && prem.expires_at) {
+    base.premium_expires_at = prem.expires_at;
+  }
+
+  return base;
 }
 
 /** ========== PAYMENT TOGGLES ========== */

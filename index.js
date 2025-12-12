@@ -69,6 +69,10 @@ const AUTO_BAN_REPORTS = 3;
 
 const bot = new Bot(BOT_TOKEN);
 
+// cooldown sederhana untuk /search
+const SEARCH_COOLDOWN_MS = 3000;
+const lastSearchAt = new Map();
+
 function isAdmin(userId) {
   return ADMIN_IDS.includes(userId);
 }
@@ -558,16 +562,17 @@ async function handlePremium(ctx) {
 
 async function main() {
   await initDb();
-  console.log("✅ Koneksi Supabase siap digunakan");
+  console.log("✅ Koneksi database siap digunakan");
 
   bot.command("start", async (ctx) => {
     const name = ctx.from.first_name || "kamu";
     const lang = await getUserLang(ctx.from.id);
 
     const textId = [
+      "┌──────────────── ShadowChat ────────────────┐",
       `👋 Hai, ${name}!`,
       "",
-      "Selamat datang di *ShadowChat* (NodeJS + Supabase).",
+      "Selamat datang di *ShadowChat*.",
       "",
       "Perintah utama:",
       "• /search — cari pasangan ngobrol anonim",
@@ -582,12 +587,14 @@ async function main() {
       "• /discount — cek / klaim kode diskon",
       "",
       "Coba kirim /search untuk mulai, atau /help untuk bantuan lengkap.",
+      "└────────────────────────────────────────────┘",
     ].join("\n");
 
     const textEn = [
+      "┌──────────────── ShadowChat ────────────────┐",
       `👋 Hey, ${name}!`,
       "",
-      "Welcome to *ShadowChat* (NodeJS + Supabase).",
+      "Welcome to *ShadowChat*.",
       "",
       "Main commands:",
       "• /search — find a random chat partner",
@@ -602,6 +609,7 @@ async function main() {
       "• /discount — check / claim discount code",
       "",
       "Type /search to start, or /help for full help.",
+      "└────────────────────────────────────────────┘",
     ].join("\n");
 
     await ctx.reply(lang === "en" ? textEn : textId, {
@@ -682,11 +690,25 @@ async function main() {
   });
 
   bot.command("search", async (ctx) => {
+    const userId = ctx.from.id;
+    const now = Date.now();
+    const last = lastSearchAt.get(userId) || 0;
+    if (now - last < SEARCH_COOLDOWN_MS) {
+      const lang = await getUserLang(userId);
+      const msg =
+        lang === "en"
+          ? "⏳ Please wait a moment before using /search again."
+          : "⏳ Tunggu sebentar sebelum menggunakan /search lagi.";
+      await ctx.reply(msg);
+      return;
+    }
+    lastSearchAt.set(userId, now);
+
     await startSearch(ctx);
     // Setiap kali mulai chat baru (saat nanti dipasangkan), kita akan
     // increment di dalam setPair. Di versi sederhana ini, kita bisa
     // increment saat user memulai pencarian.
-    await incrementChatCount(ctx.from.id);
+    await incrementChatCount(userId);
   });
 
   bot.command("stop", async (ctx) => {
@@ -740,6 +762,7 @@ async function main() {
         await ctx.reply(text);
         return;
       }
+
       const minLine =
         info.min_amount && info.min_amount > 0
           ? lang === "en"
@@ -1175,25 +1198,37 @@ async function main() {
     const stats = await getUserStats(userId);
 
     const linesId = [
-      "📊 Statistik kamu:",
+      "┌──────────── Statistik Kamu ────────────┐",
       `• Total obrolan (search): ${stats.total_chats || 0}`,
       premium ? "• Status: Premium ✅" : "• Status: Gratis",
+      stats.premium_expires_at
+        ? `• Premium sampai: ${new Date(
+            stats.premium_expires_at
+          ).toLocaleString("id-ID")}`
+        : "• Premium sampai: -",
       stats.last_active
         ? `• Terakhir aktif: ${new Date(stats.last_active).toLocaleString(
             "id-ID"
           )}`
         : "• Terakhir aktif: -",
+      "└───────────────────────────────────────┘",
     ];
 
     const linesEn = [
-      "📊 Your stats:",
+      "┌──────────── Your Stats ───────────────┐",
       `• Total chats (search): ${stats.total_chats || 0}`,
       premium ? "• Status: Premium ✅" : "• Status: Free",
+      stats.premium_expires_at
+        ? `• Premium until: ${new Date(
+            stats.premium_expires_at
+          ).toLocaleString("en-US")}`
+        : "• Premium until: -",
       stats.last_active
         ? `• Last active: ${new Date(stats.last_active).toLocaleString(
             "en-US"
           )}`
         : "• Last active: -",
+      "└───────────────────────────────────────┘",
     ];
 
     await ctx.reply(lang === "en" ? linesEn.join("\n") : linesId.join("\n"));
