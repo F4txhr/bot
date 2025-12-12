@@ -452,30 +452,25 @@ async function handlePremium(ctx) {
   if (trakteerEnabled) methods.push("trakteer");
 
   if (methods.length === 0) {
-    const header =
-      lang === "en"
-        ? "┌──────────── Premium ────────────┐"
-        : "┌──────────── Premium ────────────┐";
-    const footer = "└────────────────────────────────┘";
     const lines =
       lang === "en"
         ? [
-            header,
+            "💎 *Premium*",
+            "",
             premium
               ? "• Status: You are currently a premium user."
               : "• Status: You are currently not premium.",
             "• Payment methods are currently unavailable.",
-            footer,
           ]
         : [
-            header,
+            "💎 *Premium*",
+            "",
             premium
               ? "• Status: Kamu saat ini adalah pengguna premium."
               : "• Status: Kamu saat ini belum premium.",
             "• Saat ini tidak ada metode pembayaran yang tersedia.",
-            footer,
           ];
-    await ctx.reply(lines.join("\n"));
+    await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
     return;
   }
 
@@ -500,21 +495,19 @@ async function handlePremium(ctx) {
           "⚠️ It looks like you have a previous transaction that has not been completed yet.",
           "Please use the same unique code below to finish your payment:",
           "",
-          code,
+          `\`${code}\``,
           "",
         ]
       : [
-          "Use the unique code below in your payment note/message:",
+          "Use the *unique code* below in your payment note/message:",
           "",
-          code,
+          `\`${code}\``,
           "",
         ];
 
-    const header = "┌──────────── Premium ────────────┐";
-    const footer = "└────────────────────────────────┘";
-
     text = [
-      header,
+      "💎 *Premium*",
+      "",
       premium
         ? "• Status: You are currently a premium user."
         : "• Status: You are currently not premium.",
@@ -526,29 +519,26 @@ async function handlePremium(ctx) {
       "",
       ...reminder,
       "Then choose one of the payment methods below:",
-      footer,
     ].join("\n");
   } else {
     const reminder = reusedExisting
       ? [
           "⚠️ Sepertinya kamu masih punya transaksi sebelumnya yang belum diselesaikan.",
-          "Silakan gunakan kode unik yang sama di bawah ini untuk menyelesaikan pembayaran:",
+          "Silakan gunakan *kode unik* yang sama di bawah ini untuk menyelesaikan pembayaran:",
           "",
-          code,
+          `\`${code}\``,
           "",
         ]
       : [
-          "Gunakan kode unik di bawah ini pada catatan/pesan pembayaran:",
+          "Gunakan *kode unik* di bawah ini pada catatan/pesan pembayaran:",
           "",
-          code,
+          `\`${code}\``,
           "",
         ];
 
-    const header = "┌──────────── Premium ────────────┐";
-    const footer = "└────────────────────────────────┘";
-
     text = [
-      header,
+      "💎 *Premium*",
+      "",
       premium
         ? "• Status: Kamu saat ini adalah pengguna premium."
         : "• Status: Kamu saat ini belum premium.",
@@ -560,7 +550,6 @@ async function handlePremium(ctx) {
       "",
       ...reminder,
       "Lalu pilih salah satu metode pembayaran di bawah:",
-      footer,
     ].join("\n");
   }
 
@@ -593,10 +582,10 @@ async function main() {
     const lang = await getUserLang(ctx.from.id);
 
     const textId = [
-      "┌──────────────── ShadowChat ────────────────┐",
       `👋 Hai, ${name}!`,
       "",
-      "Selamat datang di *ShadowChat*.",
+      "*ShadowChat*",
+      "────────────",
       "",
       "Perintah utama:",
       "• /search — cari pasangan ngobrol anonim",
@@ -610,15 +599,14 @@ async function main() {
       "• /payhistory — riwayat pembayaranmu",
       "• /discount — cek / klaim kode diskon",
       "",
-      "Coba kirim /search untuk mulai, atau /help untuk bantuan lengkap.",
-      "└────────────────────────────────────────────┘",
+      "Kirim /search untuk mulai, atau /help untuk bantuan lengkap.",
     ].join("\n");
 
     const textEn = [
-      "┌──────────────── ShadowChat ────────────────┐",
       `👋 Hey, ${name}!`,
       "",
-      "Welcome to *ShadowChat*.",
+      "*ShadowChat*",
+      "────────────",
       "",
       "Main commands:",
       "• /search — find a random chat partner",
@@ -633,7 +621,6 @@ async function main() {
       "• /discount — check / claim discount code",
       "",
       "Type /search to start, or /help for full help.",
-      "└────────────────────────────────────────────┘",
     ].join("\n");
 
     await ctx.reply(lang === "en" ? textEn : textId, {
@@ -1199,7 +1186,8 @@ async function main() {
     const stats = await getUserStats(userId);
 
     const linesId = [
-      "┌──────────── Statistik Kamu ────────────┐",
+      "📊 *Statistik kamu*",
+      "",
       `• Total obrolan (search): ${stats.total_chats || 0}`,
       premium ? "• Status: Premium ✅" : "• Status: Gratis",
       stats.premium_expires_at
@@ -1212,11 +1200,11 @@ async function main() {
             "id-ID"
           )}`
         : "• Terakhir aktif: -",
-      "└───────────────────────────────────────┘",
     ];
 
     const linesEn = [
-      "┌──────────── Your Stats ───────────────┐",
+      "📊 *Your stats*",
+      "",
       `• Total chats (search): ${stats.total_chats || 0}`,
       premium ? "• Status: Premium ✅" : "• Status: Free",
       stats.premium_expires_at
@@ -1229,10 +1217,11 @@ async function main() {
             "en-US"
           )}`
         : "• Last active: -",
-      "└───────────────────────────────────────┘",
     ];
 
-    await ctx.reply(lang === "en" ? linesEn.join("\n") : linesId.join("\n"));
+    await ctx.reply(lang === "en" ? linesEn.join("\n") : linesId.join("\n"), {
+      parse_mode: "Markdown",
+    });
   });
 
   // Riwayat pembayaran user
