@@ -452,17 +452,30 @@ async function handlePremium(ctx) {
   if (trakteerEnabled) methods.push("trakteer");
 
   if (methods.length === 0) {
-    if (lang === "en") {
-      const text = premium
-        ? "💎 You are currently a *premium* user.\n\nPayment methods are currently unavailable."
-        : "💎 You are currently *not* premium.\n\nPayment methods are currently unavailable.";
-      await ctx.reply(text, { parse_mode: "Markdown" });
-    } else {
-      const text = premium
-        ? "💎 Kamu saat ini adalah pengguna *premium*.\n\nSaat ini tidak ada metode pembayaran yang tersedia."
-        : "💎 Kamu saat ini *belum* premium.\n\nSaat ini tidak ada metode pembayaran yang tersedia.";
-      await ctx.reply(text, { parse_mode: "Markdown" });
-    }
+    const header =
+      lang === "en"
+        ? "┌──────────── Premium ────────────┐"
+        : "┌──────────── Premium ────────────┐";
+    const footer = "└────────────────────────────────┘";
+    const lines =
+      lang === "en"
+        ? [
+            header,
+            premium
+              ? "• Status: You are currently a premium user."
+              : "• Status: You are currently not premium.",
+            "• Payment methods are currently unavailable.",
+            footer,
+          ]
+        : [
+            header,
+            premium
+              ? "• Status: Kamu saat ini adalah pengguna premium."
+              : "• Status: Kamu saat ini belum premium.",
+            "• Saat ini tidak ada metode pembayaran yang tersedia.",
+            footer,
+          ];
+    await ctx.reply(lines.join("\n"));
     return;
   }
 
@@ -485,57 +498,69 @@ async function handlePremium(ctx) {
     const reminder = reusedExisting
       ? [
           "⚠️ It looks like you have a previous transaction that has not been completed yet.",
-          "Please use the same *unique code* below to finish your payment:",
+          "Please use the same unique code below to finish your payment:",
           "",
-          `\`${code}\``,
+          code,
           "",
         ]
       : [
-          "Use the *unique code* below in your payment note/message:",
+          "Use the unique code below in your payment note/message:",
           "",
-          `\`${code}\``,
+          code,
           "",
         ];
 
+    const header = "┌──────────── Premium ────────────┐";
+    const footer = "└────────────────────────────────┘";
+
     text = [
+      header,
       premium
-        ? "💎 You are currently a *premium* user."
-        : "💎 You are currently *not* premium.",
+        ? "• Status: You are currently a premium user."
+        : "• Status: You are currently not premium.",
       "",
-      "Each Rp 1.000 = 1 day of premium. Example:",
-      "• Rp 3.000 → 3 days",
-      "• Rp 10.000 → 10 days",
+      "• Each Rp 1.000 = 1 day of premium.",
+      "  Example:",
+      "  - Rp 3.000 → 3 days",
+      "  - Rp 10.000 → 10 days",
       "",
       ...reminder,
       "Then choose one of the payment methods below:",
+      footer,
     ].join("\n");
   } else {
     const reminder = reusedExisting
       ? [
           "⚠️ Sepertinya kamu masih punya transaksi sebelumnya yang belum diselesaikan.",
-          "Silakan gunakan *kode unik* yang sama di bawah ini untuk menyelesaikan pembayaran:",
+          "Silakan gunakan kode unik yang sama di bawah ini untuk menyelesaikan pembayaran:",
           "",
-          `\`${code}\``,
+          code,
           "",
         ]
       : [
-          "Gunakan *kode unik* di bawah ini pada catatan/pesan pembayaran:",
+          "Gunakan kode unik di bawah ini pada catatan/pesan pembayaran:",
           "",
-          `\`${code}\``,
+          code,
           "",
         ];
 
+    const header = "┌──────────── Premium ────────────┐";
+    const footer = "└────────────────────────────────┘";
+
     text = [
+      header,
       premium
-        ? "💎 Kamu saat ini adalah pengguna *premium*."
-        : "💎 Kamu saat ini *belum* premium.",
+        ? "• Status: Kamu saat ini adalah pengguna premium."
+        : "• Status: Kamu saat ini belum premium.",
       "",
-      "Setiap Rp 1.000 = 1 hari premium. Contoh:",
-      "• Rp 3.000 → 3 hari",
-      "• Rp 10.000 → 10 hari",
+      "• Setiap Rp 1.000 = 1 hari premium.",
+      "  Contoh:",
+      "  - Rp 3.000 → 3 hari",
+      "  - Rp 10.000 → 10 hari",
       "",
       ...reminder,
       "Lalu pilih salah satu metode pembayaran di bawah:",
+      footer,
     ].join("\n");
   }
 
@@ -555,7 +580,6 @@ async function handlePremium(ctx) {
   }
 
   await ctx.reply(text, {
-    parse_mode: "Markdown",
     reply_markup: keyboard,
   });
 }
@@ -802,29 +826,6 @@ async function main() {
               "",
               `• Code: \`${info.code}\``,
               `• Percent: ${info.percent}%`,
-              minLine,
-              expLine,
-              "",
-              "Use it on your next payment (manual or Trakteer).",
-            ]
-              .filter(Boolean)
-              .join("\n")
-          : [
-              "💸 Kode diskon aktifmu:",
-              "",
-              `• Kode: \`${info.code}\``,
-              `• Diskon: ${info.percent}%`,
-              minLine,
-              expLine,
-              "",
-              "Gunakan saat pembayaran berikutnya (manual atau Trakteer).",
-            ]
-              .filter(Boolean)
-              .join("\n");
-
-      await ctx.reply(text, { parse_mode: "Markdown" });
-      return;
-    }%`,
               minLine,
               expLine,
               "",
