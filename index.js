@@ -41,6 +41,8 @@ const {
   getAllUserIdsForBroadcast,
   logReportedMessage,
   countSimilarReports,
+  banMedia,
+  isMediaBanned,
 } = require("./db");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -331,10 +333,17 @@ async function handleReport(ctx) {
   let ocrHash = "";
   let mediaFileId = "";
   let mediaUniqueId = "";
+  let textHash = "";
 
   if (m.text) {
     messageType = "text";
     text = m.text;
+    if (text.trim().length > 0) {
+      textHash = crypto
+        .createHash("sha256")
+        .update(text.trim().toLowerCase())
+        .digest("hex");
+    }
   } else if (m.photo && m.photo.length > 0) {
     messageType = "photo";
     const photo = m.photo[m.photo.length - 1];
@@ -380,6 +389,7 @@ async function handleReport(ctx) {
     partnerId,
     messageType,
     text,
+    textHash,
     ocrText,
     ocrHash,
     mediaFileId,
@@ -453,9 +463,7 @@ async function handleReport(ctx) {
   const textAdminId = baseLinesId.join("\n");
 
   const actionKeyboard = partnerId
-    ? new InlineKeyboard()
-        .text("🚫 Ban", `admin_ban:${partnerId}`)
-        .text("✅ Unban", `admin_unban:${partnerId}`)
+    ? new InlineKeyboard().text("🚫 Ban media", `admin_banmedia:${partnerId}:${mediaUniqueId || "-"}:${ocrHash || "-"}:${textHash || "-"}`)
     : undefined;
 
   // Kirim ke grup admin (REPORT_LOG_CHAT_ID)
@@ -1389,8 +1397,8 @@ async function main() {
     }
   });
 
-  // Admin actions from report log group/DM
-  bot.callbackQuery(/^admin_ban:(\d+)$/, async (ctx) => {
+  // Admin actions from report log group/DM: ban media (bukan user)
+  bot.callbackQuery(/^admin_banmedia:(\d+):([^:]*):([^:]*):([^:]*)$/, async (ctx) => {
     const adminId = ctx.from.id;
     const lang = await getUserLang(adminId);
 
@@ -1402,12 +1410,18 @@ async function main() {
       return;
     }
 
-    const targetId = Number(ctx.match[1]);
-    await banUser(targetId, "Banned by admin from report");
-    await clearPair(targetId);
+    const reportedUserId = Number(ctx.match[1]);
+    const mediaUniqueId = ctx.match[2] === "-" ? "" : ctx.match[2];
+    const ocrHash = ctx.match[3] === "-" ? "" : ctx.match[3];
+    const textHash = ctx.match[4] === "-" ? "" : ctx.match[4];
+
+    await banMedia({ mediaUniqueId, ocrHash, textHash });
 
     await ctx.answerCallbackQuery({
-      text: lang === "en" ? "User banned." : "User diblokir.",
+      text:
+        lang === "en"
+          ? "Media has been banned. Similar content will be blocked."
+          : "Media telah diblokir. Konten serupa akan diblokir.",
       show_alert: false,
     });
 
@@ -1415,15 +1429,15 @@ async function main() {
     if (msg) {
       try {
         await bot.api.editMessageReplyMarkup(msg.chat.id, msg.message_id, {
-          reply_markup: undefined,
+          reply_markup: { inline_keyboard: [] },
         });
       } catch (_) {}
       try {
         await bot.api.sendMessage(
           msg.chat.id,
           lang === "en"
-            ? `✅ Banned user ${targetId}.`
-            : `✅ Memblokir user ${targetId}.`,
+            ? `✅ Media banned (reported user ${reportedUserId}).`
+            : `✅ Media diblokir (user terlapor ${reportedUserId}).`,
           {
             reply_to_message_id: msg.message_id,
             message_thread_id:
@@ -1434,71 +1448,6 @@ async function main() {
         );
       } catch (_) {}
     }
-
-    try {
-      const uLang = await getUserLang(targetId);
-      await bot.api.sendMessage(
-        targetId,
-        uLang === "en"
-          ? "❌ Your account has been blocked by admin."
-          : "❌ Akunmu telah diblokir oleh admin."
-      );
-    } catch (_) {}
-  });
-
-  bot.callbackQuery(/^admin_unban:(\d+)$/, async (ctx) => {
-    const adminId = ctx.from.id;
-    const lang = await getUserLang(adminId);
-
-    if (!isAdmin(adminId)) {
-      await ctx.answerCallbackQuery({
-        text: lang === "en" ? "Admin only." : "Khusus admin.",
-        show_alert: true,
-      });
-      return;
-    }
-
-    const targetId = Number(ctx.match[1]);
-    await unbanUser(targetId);
-
-    await ctx.answerCallbackQuery({
-      text: lang === "en" ? "User unbanned." : "User dibuka blokir.",
-      show_alert: false,
-    });
-
-    const msg = ctx.callbackQuery.message;
-    if (msg) {
-      try {
-        await bot.api.editMessageReplyMarkup(msg.chat.id, msg.message_id, {
-          reply_markup: undefined,
-        });
-      } catch (_) {}
-      try {
-        await bot.api.sendMessage(
-          msg.chat.id,
-          lang === "en"
-            ? `✅ Unbanned user ${targetId}.`
-            : `✅ Membuka blokir user ${targetId}.`,
-          {
-            reply_to_message_id: msg.message_id,
-            message_thread_id:
-              REPORT_LOG_TOPIC_ID && REPORT_LOG_TOPIC_ID > 0
-                ? REPORT_LOG_TOPIC_ID
-                : undefined,
-          }
-        );
-      } catch (_) {}
-    }
-
-    try {
-      const uLang = await getUserLang(targetId);
-      await bot.api.sendMessage(
-        targetId,
-        uLang === "en"
-          ? "✅ Your account has been unblocked by admin."
-          : "✅ Akunmu telah dibuka blokirnya oleh admin."
-      );
-    } catch (_) {}
   });
 
   bot.command("stats", async (ctx) => {
