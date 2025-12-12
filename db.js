@@ -206,16 +206,29 @@ async function isBanned(userId) {
   return !!(data && data.length);
 }
 
-async function banUser(userId, reason = "Multiple reports") {
-  const now = new Date().toISOString();
-  const { error } = await supabase
-    .from("banned_users")
-    .upsert(
-      { user_id: userId, reason, created_at: now },
-      { onConflict: "user_id" }
-    );
+async function banUser(userId, reason = "") {
+  const payload = {
+    user_id: userId,
+    reason: reason || null,
+    created_at: new Date().toISOString(),
+  };
+  const { error } = await supabase.from("banned_users").upsert(payload, {
+    onConflict: "user_id",
+  });
+
   if (error) {
     console.error("Supabase banUser error:", error.message);
+  }
+}
+
+async function unbanUser(userId) {
+  const { error } = await supabase
+    .from("banned_users")
+    .delete()
+    .eq("user_id", userId);
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase unbanUser error:", error.message);
   }
 }
 
@@ -1107,6 +1120,7 @@ module.exports = {
   // report & ban
   isBanned,
   banUser,
+  unbanUser,
   addReport,
   // user settings
   getUserLang,

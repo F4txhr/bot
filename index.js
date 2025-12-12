@@ -13,6 +13,7 @@ const {
   pushToQueue,
   isBanned,
   banUser,
+  unbanUser,
   addReport,
   getUserLang,
   setUserLang,
@@ -401,69 +402,71 @@ async function handleReport(ctx) {
 
   await ctx.reply(msgUser);
 
-  // Kirim ke grup admin
+  // Susun teks untuk admin (ID & EN)
+  const baseLinesEn = [
+    "🛑 *Message Report*",
+    "",
+    `Reporter: \`${userId}\``,
+    `Partner (if any): \`${partnerId || "-"}\``,
+    `Type: ${messageType}`,
+    similarCount > 0
+      ? `Similar reports with same OCR hash (excluding this): ${similarCount}`
+      : "",
+    "",
+  ].filter(Boolean);
+
+  const baseLinesId = [
+    "🛑 *Laporan Pesan*",
+    "",
+    `Pelapor: \`${userId}\``,
+    `Partner (jika ada): \`${partnerId || "-"}\``,
+    `Tipe: ${messageType}`,
+    similarCount > 0
+      ? `Jumlah laporan lain dengan OCR hash sama (di luar ini): ${similarCount}`
+      : "",
+    "",
+  ].filter(Boolean);
+
+  if (text) {
+    baseLinesEn.push("*Text:*\n```", text.slice(0, 1900), "```");
+    baseLinesId.push("*Teks:*\n```", text.slice(0, 1900), "```");
+  }
+
+  if (ocrText) {
+    baseLinesEn.push(
+      "",
+      "*OCR text (if any):*",
+      "```",
+      ocrText.slice(0, 1900),
+      "```"
+    );
+    baseLinesId.push(
+      "",
+      "*Teks OCR (jika ada):*",
+      "```",
+      ocrText.slice(0, 1900),
+      "```"
+    );
+  }
+
+  const textAdminEn = baseLinesEn.join("\n");
+  const textAdminId = baseLinesId.join("\n");
+
+  // Kirim ke grup admin (REPORT_LOG_CHAT_ID)
   if (REPORT_LOG_CHAT_ID) {
-    const baseLinesEn = [
-      "🛑 *Message Report*",
-      "",
-      `Reporter: \`${userId}\``,
-      `Partner (if any): \`${partnerId || "-"}\``,
-      `Type: ${messageType}`,
-      similarCount > 0
-        ? `Similar reports with same OCR hash (excluding this): ${similarCount}`
-        : "",
-      "",
-    ].filter(Boolean);
-
-    const baseLinesId = [
-      "🛑 *Laporan Pesan*",
-      "",
-      `Pelapor: \`${userId}\``,
-      `Partner (jika ada): \`${partnerId || "-"}\``,
-      `Tipe: ${messageType}`,
-      similarCount > 0
-        ? `Jumlah laporan lain dengan OCR hash sama (di luar ini): ${similarCount}`
-        : "",
-      "",
-    ].filter(Boolean);
-
-    if (text) {
-      baseLinesEn.push("*Text:*\n```", text.slice(0, 1900), "```");
-      baseLinesId.push("*Teks:*\n```", text.slice(0, 1900), "```");
-    }
-
-    if (ocrText) {
-      baseLinesEn.push(
-        "",
-        "*OCR text (if any):*",
-        "```",
-        ocrText.slice(0, 1900),
-        "```"
-      );
-      baseLinesId.push(
-        "",
-        "*Teks OCR (jika ada):*",
-        "```",
-        ocrText.slice(0, 1900),
-        "```"
-      );
-    }
-
-    const textAdmin =
-      lang === "en"
-        ? baseLinesEn.join("\n")
-        : baseLinesId.join("\n");
-
     try {
-      const sent = await bot.api.sendMessage(REPORT_LOG_CHAT_ID, textAdmin, {
-        parse_mode: "Markdown",
-        message_thread_id:
-          REPORT_LOG_TOPIC_ID && REPORT_LOG_TOPIC_ID > 0
-            ? REPORT_LOG_TOPIC_ID
-            : undefined,
-      });
+      const sent = await bot.api.sendMessage(
+        REPORT_LOG_CHAT_ID,
+        lang === "en" ? textAdminEn : textAdminId,
+        {
+          parse_mode: "Markdown",
+          message_thread_id:
+            REPORT_LOG_TOPIC_ID && REPORT_LOG_TOPIC_ID > 0
+              ? REPORT_LOG_TOPIC_ID
+              : undefined,
+        }
+      );
 
-      // forward/copy pesan asli ke grup admin supaya bisa dilihat
       try {
         await bot.api.copyMessage(
           REPORT_LOG_CHAT_ID,
@@ -482,6 +485,17 @@ async function handleReport(ctx) {
       }
     } catch (err) {
       console.error("Gagal kirim log report:", err.message);
+    }
+  }
+
+  // DM ke setiap admin
+  for (const adminId of ADMIN_IDS) {
+    try {
+      const aLang = await getUserLang(adminId);
+      const t = aLang === "en" ? textAdminEn : textAdminId;
+      await bot.api.sendMessage(adminId, t, { parse_mode: "Markdown" });
+    } catch (e) {
+      // abaikan error kirim ke admin tertentu
     }
   }
 }
@@ -846,6 +860,85 @@ async function main() {
 
   bot.command("report", async (ctx) => {
     await handleReport(ctx);
+  });
+
+  // Admin: ban / unban user
+  bot.command("ban", async (ctx) => {
+    const adminId = ctx.from.id;
+    if (!isAdmin(adminId)) return;
+    const lang = await getUserLang(adminId);
+    const args = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+    if (args.length < 1) {
+      const msg =
+        lang === "en"
+          ? "Usage: /ban <user_id> [reason]"
+          : "Cara pakai: /ban <user_id> [alasan]";
+      await ctx.reply(msg);
+      return;
+    }
+    const targetId = Number(args[0]);
+    if (!targetId || Number.isNaN(targetId)) {
+      const msg =
+        lang === "en"
+          ? "User ID must be a valid number."
+          : "User ID harus berupa angka yang valid.";
+      await ctx.reply(msg);
+      return;
+    }
+    const reason = args.slice(1).join(" ") || "Banned by admin";
+    await banUser(targetId, reason);
+    await clearPair(targetId);
+    const msgAdmin =
+      lang === "en"
+        ? `✅ User ${targetId} has been banned.\nReason: ${reason}`
+        : `✅ User ${targetId} telah diblokir.\nAlasan: ${reason}`;
+    await ctx.reply(msgAdmin);
+    try {
+      const userLang = await getUserLang(targetId);
+      const msgUser =
+        userLang === "en"
+          ? "❌ Your account has been blocked by admin."
+          : "❌ Akunmu telah diblokir oleh admin.";
+      await bot.api.sendMessage(targetId, msgUser);
+    } catch (_) {}
+  });
+
+  bot.command("unban", async (ctx) => {
+    const adminId = ctx.from.id;
+    if (!isAdmin(adminId)) return;
+    const lang = await getUserLang(adminId);
+    const args = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+    if (args.length < 1) {
+      const msg =
+        lang === "en"
+          ? "Usage: /unban <user_id>"
+          : "Cara pakai: /unban <user_id>";
+      await ctx.reply(msg);
+      return;
+    }
+    const targetId = Number(args[0]);
+    if (!targetId || Number.isNaN(targetId)) {
+      const msg =
+        lang === "en"
+          ? "User ID must be a valid number."
+          : "User ID harus berupa angka yang valid.";
+      await ctx.reply(msg);
+      return;
+    }
+    await unbanUser(targetId);
+    const msgAdmin =
+      lang === "en"
+        ? `✅ User ${targetId} has been unbanned.`
+        : `✅ User ${targetId} telah dibuka blokirnya.`;
+    await ctx.reply(msgAdmin);
+    try {
+      const userLang = await getUserLang(targetId);
+      const msgUser =
+        userLang === "en"
+          ? "✅ Your account has been unblocked by admin."
+          : "✅ Akunmu telah dibuka blokirnya oleh admin.";
+      await bot.api.sendMessage(targetId, msgUser);
+    } catch (_) {}
   });
 
   bot.command("lang", async (ctx) => {
