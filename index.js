@@ -4,6 +4,7 @@ const crypto = require("crypto");
 require("dotenv").config();
 
 const {
+  supabase,
   initDb,
   getPartner,
   setPair,
