@@ -959,6 +959,31 @@ async function disableDiscountCode(rawCode, disabled = true) {
   return true;
 }
 
+/**
+ * Mengambil daftar user_id yang pernah tercatat (untuk broadcast).
+ * Saat ini diambil dari tabel user_stats.
+ */
+async function getAllUserIdsForBroadcast() {
+  const { data, error } = await supabase
+    .from("user_stats")
+    .select("user_id");
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase getAllUserIdsForBroadcast error:", error.message);
+    return [];
+  }
+
+  if (!Array.isArray(data)) return [];
+  const ids = new Set();
+  for (const row of data) {
+    const id = Number(row.user_id);
+    if (Number.isFinite(id) && id > 0) {
+      ids.add(id);
+    }
+  }
+  return Array.from(ids);
+}
+
 /** ========== PAYMENT CODES HELPERS ========== */
 
 async function findUserByPaymentCode(code, methodFilter = null) {
@@ -1039,4 +1064,5 @@ module.exports = {
   clearUserDiscount,
   markDiscountUsed,
   disableDiscountCode,
+  getAllUserIdsForBroadcast,
 };

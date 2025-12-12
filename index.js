@@ -36,6 +36,7 @@ const {
   clearUserDiscount,
   markDiscountUsed,
   disableDiscountCode,
+  getAllUserIdsForBroadcast,
 } = require("./db");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -746,15 +747,30 @@ async function main() {
             : `• Minimal nominal: Rp ${info.min_amount.toLocaleString("id-ID")}`
           : "";
 
-      const expLine = info.expire_at
-        ? lang === "en"
-          ? `• Expires at: ${new Date(info.expire_at).toLocaleString("en-US")}`
-          : `• Berlaku sampai: ${new Date(info.expire_at).toLocaleString(
-              "id-ID"
-            )}`
-        : lang === "en"
-        ? "• Expires at: (no expiry set)"
-        : "• Berlaku sampai: (tanpa batas waktu)";
+      let expLine;
+      if (info.expire_at) {
+        const exp = new Date(info.expire_at);
+        const now = new Date();
+        const diffMs = exp.getTime() - now.getTime();
+        const diffDays =
+          diffMs > 0 ? Math.ceil(diffMs / (24 * 3600 * 1000)) : 0;
+        const base =
+          lang === "en"
+            ? `• Expires at: ${exp.toLocaleString("en-US")}`
+            : `• Berlaku sampai: ${exp.toLocaleString("id-ID")}`;
+        const remain =
+          diffDays > 0
+            ? lang === "en"
+              ? ` (about ${diffDays} day(s) left)`
+              : ` (sekitar ${diffDays} hari lagi)`
+            : "";
+        expLine = base + remain;
+      } else {
+        expLine =
+          lang === "en"
+            ? "• Expires at: (no expiry set)"
+            : "• Berlaku sampai: (tanpa batas waktu)";
+      }
 
       const text =
         lang === "en"
@@ -763,6 +779,29 @@ async function main() {
               "",
               `• Code: \`${info.code}\``,
               `• Percent: ${info.percent}%`,
+              minLine,
+              expLine,
+              "",
+              "Use it on your next payment (manual or Trakteer).",
+            ]
+              .filter(Boolean)
+              .join("\n")
+          : [
+              "💸 Kode diskon aktifmu:",
+              "",
+              `• Kode: \`${info.code}\``,
+              `• Diskon: ${info.percent}%`,
+              minLine,
+              expLine,
+              "",
+              "Gunakan saat pembayaran berikutnya (manual atau Trakteer).",
+            ]
+              .filter(Boolean)
+              .join("\n");
+
+      await ctx.reply(text, { parse_mode: "Markdown" });
+      return;
+    }%`,
               minLine,
               expLine,
               "",
@@ -1447,6 +1486,46 @@ async function main() {
               .join("\n");
 
       await ctx.reply(text, { parse_mode: "Markdown" });
+
+      // Broadcast ke semua user yang pernah tercatat
+      const userIds = await getAllUserIdsForBroadcast();
+      const broadcastTextId = [
+        "💸 *Kode Diskon Baru!*",
+        "",
+        `Kode: \`${info.code}\``,
+        `Diskon: ${info.percent}%`,
+        minLine || "",
+        expLine || "",
+        "",
+        "Gunakan /discount dan masukkan kode di atas untuk klaim.",
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      const broadcastTextEn = [
+        "💸 *New Discount Code!*",
+        "",
+        `Code: \`${info.code}\``,
+        `Discount: ${info.percent}%`,
+        minLine
+          ? `• Minimum amount: Rp ${info.min_amount.toLocaleString("id-ID")}`
+          : "",
+        expLine || "",
+        "",
+        "Use /discount and enter the code above to claim.",
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      for (const uid of userIds) {
+        try {
+          const uLang = await getUserLang(uid);
+          const t = uLang === "en" ? broadcastTextEn : broadcastTextId;
+          await bot.api.sendMessage(uid, t, { parse_mode: "Markdown" });
+        } catch (e) {
+          // abaikan error kirim ke user tertentu
+        }
+      }
     } catch (err) {
       const msg =
         lang === "en"
