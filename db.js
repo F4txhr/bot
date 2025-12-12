@@ -1166,6 +1166,78 @@ async function markPaymentCodeUsed(code) {
   }
 }
 
+/** ========== USER TRUST ========== */
+/*
+ * Schema yang direkomendasikan:
+ *
+ * create table if not exists user_trust (
+ *   user_id bigint primary key,
+ *   score int not null default 100,
+ *   total_reports_valid int not null default 0,
+ *   updated_at timestamptz default now()
+ * );
+ */
+
+async function getUserTrust(userId) {
+  if (!userId) {
+    return { score: 100, total_reports_valid: 0 };
+  }
+
+  const { data, error } = await supabase
+    .from("user_trust")
+    .select("score,total_reports_valid,updated_at")
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase getUserTrust error:", error.message);
+    return { score: 100, total_reports_valid: 0 };
+  }
+
+  if (!data) {
+    return { score: 100, total_reports_valid: 0 };
+  }
+
+  return {
+    score: typeof data.score === "number" ? data.score : 100,
+    total_reports_valid:
+      typeof data.total_reports_valid === "number"
+        ? data.total_reports_valid
+        : 0,
+    updated_at: data.updated_at || null,
+  };
+}
+
+async function adjustUserTrust(userId, delta) {
+  if (!userId || !Number.isFinite(Number(delta))) return null;
+
+  const nowIso = new Date().toISOString();
+
+  const current = await getUserTrust(userId);
+  let newScore = current.score + Number(delta);
+  if (newScore > 100) newScore = 100;
+  if (newScore < 0) newScore = 0;
+
+  const { error } = await supabase.from("user_trust").upsert(
+    {
+      user_id: userId,
+      score: newScore,
+      total_reports_valid:
+        current.total_reports_valid + (delta < 0 ? 1 : 0),
+      updated_at: nowIso,
+    },
+    { onConflict: "user_id" }
+  );
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase adjustUserTrust error:", error.message);
+    return current;
+  }
+
+  return { score: newScore, total_reports_valid: current.total_reports_valid };
+}
+
 module.exports = {
   supabase,
   initDb,
@@ -1217,4 +1289,7 @@ module.exports = {
   countSimilarReports,
   banMedia,
   isMediaBanned,
+  // trust
+  getUserTrust,
+  adjustUserTrust,
 };

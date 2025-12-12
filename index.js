@@ -44,6 +44,8 @@ const {
   countSimilarReports,
   banMedia,
   isMediaBanned,
+  getUserTrust,
+  adjustUserTrust,
 } = require("./db");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -1436,6 +1438,11 @@ async function main() {
       textHash: data.text_hash || "",
     });
 
+    // turunkan trust user terlapor jika diketahui
+    if (reportedUserId) {
+      await adjustUserTrust(reportedUserId, -10);
+    }
+
     await ctx.answerCallbackQuery({
       text:
         lang === "en"
@@ -1936,6 +1943,84 @@ async function main() {
           : `🎉 Premium kamu ditambah ${days} hari oleh admin.`;
       await bot.api.sendMessage(userId, msgUser);
     } catch (_) {}
+  });
+
+  // Admin: cek status user
+  bot.command("user", async (ctx) => {
+    const adminId = ctx.from.id;
+    if (!isAdmin(adminId)) return;
+    const lang = await getUserLang(adminId);
+    const args = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+
+    if (args.length < 1) {
+      const msg =
+        lang === "en"
+          ? "Usage: /user <user_id>"
+          : "Cara pakai: /user <user_id>";
+      await ctx.reply(msg);
+      return;
+    }
+
+    const targetId = Number(args[0]);
+    if (!targetId || Number.isNaN(targetId)) {
+      const msg =
+        lang === "en"
+          ? "User ID must be a valid number."
+          : "User ID harus berupa angka yang valid.";
+      await ctx.reply(msg);
+      return;
+    }
+
+    const banned = await isBanned(targetId);
+    const premium = await isPremium(targetId);
+    const stats = await getUserStats(targetId);
+    const trust = await getUserTrust(targetId);
+
+    const linesId = [
+      "👤 *Info user*",
+      "",
+      `• ID: ${targetId}`,
+      `• Banned: ${banned ? "YA" : "TIDAK"}`,
+      `• Premium: ${premium ? "YA" : "TIDAK"}`,
+      stats.premium_expires_at
+        ? `• Premium sampai: ${new Date(
+            stats.premium_expires_at
+          ).toLocaleString("id-ID")}`
+        : "• Premium sampai: -",
+      `• Total obrolan: ${stats.total_chats || 0}`,
+      stats.last_active
+        ? `• Terakhir aktif: ${new Date(stats.last_active).toLocaleString(
+            "id-ID"
+          )}`
+        : "• Terakhir aktif: -",
+      `• Trust score: ${trust.score} / 100`,
+      `• Total laporan valid: ${trust.total_reports_valid || 0}`,
+    ];
+
+    const linesEn = [
+      "👤 *User info*",
+      "",
+      `• ID: ${targetId}`,
+      `• Banned: ${banned ? "YES" : "NO"}`,
+      `• Premium: ${premium ? "YES" : "NO"}`,
+      stats.premium_expires_at
+        ? `• Premium until: ${new Date(
+            stats.premium_expires_at
+          ).toLocaleString("en-US")}`
+        : "• Premium until: -",
+      `• Total chats: ${stats.total_chats || 0}`,
+      stats.last_active
+        ? `• Last active: ${new Date(stats.last_active).toLocaleString(
+            "en-US"
+          )}`
+        : "• Last active: -",
+      `• Trust score: ${trust.score} / 100`,
+      `• Total valid reports: ${trust.total_reports_valid || 0}`,
+    ];
+
+    await ctx.reply(lang === "en" ? linesEn.join("\n") : linesId.join("\n"), {
+      parse_mode: "Markdown",
+    });
   });
 
   bot.on("message", async (ctx) => {
