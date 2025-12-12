@@ -1052,10 +1052,19 @@ async function logReportedMessage({
     created_at: new Date().toISOString(),
   };
 
-  const { error } = await supabase.from("reported_messages").insert(payload);
+  // minta balik id supaya bisa dipakai di callback data (hindari callback terlalu panjang)
+  const { data, error } = await supabase
+    .from("reported_messages")
+    .insert(payload)
+    .select("id")
+    .single();
+
   if (error && error.code !== "PGRST116") {
     console.error("Supabase logReportedMessage error:", error.message);
+    return null;
   }
+
+  return data ? data.id : null;
 }
 
 /**
@@ -1103,30 +1112,18 @@ async function banMedia({ mediaUniqueId = "", ocrHash = "", textHash = "" }) {
 }
 
 async function isMediaBanned({ mediaUniqueId = "", ocrHash = "", textHash = "" }) {
-  let query = supabase.from("banned_media").select("id", {
-    count: "exact",
-    head: true,
-  });
+  // cek sederhana: jika salah satu field match, anggap banned
+  const orClauses = [];
+  if (mediaUniqueId) orClauses.push(`media_unique_id.eq.${mediaUniqueId}`);
+  if (ocrHash) orClauses.push(`ocr_hash.eq.${ocrHash}`);
+  if (textHash) orClauses.push(`text_hash.eq.${textHash}`);
+  if (!orClauses.length) return false;
 
-  if (mediaUniqueId) {
-    query = query.eq("media_unique_id", mediaUniqueId);
-  }
-  if (ocrHash) {
-    query = query.or(
-      `ocr_hash.eq.${ocrHash}${
-        mediaUniqueId ? ",media_unique_id.eq." + mediaUniqueId : ""
-      }`
-    );
-  }
-  if (textHash) {
-    query = query.or(
-      `text_hash.eq.${textHash}${
-        mediaUniqueId ? ",media_unique_id.eq." + mediaUniqueId : ""
-      }`
-    );
-  }
+  const { count, error } = await supabase
+    .from("banned_media")
+    .select("id", { count: "exact", head: true })
+    .or(orClauses.join(","));
 
-  const { count, error } = await query;
   if (error && error.code !== "PGRST116") {
     console.error("Supabase isMediaBanned error:", error.message);
     return false;

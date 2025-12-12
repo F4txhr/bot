@@ -384,7 +384,7 @@ async function handleReport(ctx) {
       .digest("hex");
   }
 
-  await logReportedMessage({
+  const reportId = await logReportedMessage({
     reporterId: userId,
     partnerId,
     messageType,
@@ -450,11 +450,11 @@ async function handleReport(ctx) {
   const textAdminEn = baseLinesEn.join("\n");
   const textAdminId = baseLinesId.join("\n");
 
-  const reportedIdForAction = partnerId || 0;
-  const actionKeyboard = new InlineKeyboard().text(
-    "🚫 Ban media",
-    `admin_banmedia:${reportedIdForAction}:${mediaUniqueId || "-"}:${ocrHash || "-"}:${textHash || "-"}`
-  );
+  // Gunakan reportId saja di callback untuk menghindari data callback terlalu panjang
+  const actionKeyboard =
+    reportId != null
+      ? new InlineKeyboard().text("🚫 Ban media", `admin_banmedia:${reportId}`)
+      : undefined;
 
   // Kirim ke grup admin (REPORT_LOG_CHAT_ID)
   if (REPORT_LOG_CHAT_ID) {
@@ -1388,7 +1388,7 @@ async function main() {
   });
 
   // Admin actions from report log group/DM: ban media (bukan user)
-  bot.callbackQuery(/^admin_banmedia:(\d+):([^:]*):([^:]*):([^:]*)$/, async (ctx) => {
+  bot.callbackQuery(/^admin_banmedia:(\d+)$/, async (ctx) => {
     const adminId = ctx.from.id;
     const lang = await getUserLang(adminId);
 
@@ -1400,12 +1400,40 @@ async function main() {
       return;
     }
 
-    const reportedUserId = Number(ctx.match[1]);
-    const mediaUniqueId = ctx.match[2] === "-" ? "" : ctx.match[2];
-    const ocrHash = ctx.match[3] === "-" ? "" : ctx.match[3];
-    const textHash = ctx.match[4] === "-" ? "" : ctx.match[4];
+    const reportId = Number(ctx.match[1]);
+    if (!reportId) {
+      await ctx.answerCallbackQuery({
+        text: lang === "en" ? "Invalid report id." : "ID laporan tidak valid.",
+        show_alert: false,
+      });
+      return;
+    }
 
-    await banMedia({ mediaUniqueId, ocrHash, textHash });
+    // Ambil detail report dari Supabase
+    const { data, error } = await supabase
+      .from("reported_messages")
+      .select("partner_id, media_unique_id, ocr_hash, text_hash")
+      .eq("id", reportId)
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data) {
+      await ctx.answerCallbackQuery({
+        text:
+          lang === "en"
+            ? "Failed to load report detail."
+            : "Gagal mengambil detail laporan.",
+        show_alert: false,
+      });
+      return;
+    }
+
+    const reportedUserId = data.partner_id || 0;
+    await banMedia({
+      mediaUniqueId: data.media_unique_id || "",
+      ocrHash: data.ocr_hash || "",
+      textHash: data.text_hash || "",
+    });
 
     await ctx.answerCallbackQuery({
       text:
