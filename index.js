@@ -412,12 +412,12 @@ async function handleReport(ctx) {
 
   await ctx.reply(msgUser);
 
-  // Susun teks untuk admin (ID & EN)
+  // Susun teks untuk admin (ID & EN) tanpa Markdown rumit, supaya aman
   const baseLinesEn = [
-    "🛑 *Message Report*",
+    "🛑 Message Report",
     "",
-    `Reporter: \`${userId}\``,
-    `Reported user: \`${partnerId || "-"}\``,
+    `Reporter: ${userId}`,
+    `Reported user: ${partnerId || "-"}`,
     `Type: ${messageType}`,
     similarCount > 0
       ? `Similar reports with same OCR hash (excluding this): ${similarCount}`
@@ -426,10 +426,10 @@ async function handleReport(ctx) {
   ].filter(Boolean);
 
   const baseLinesId = [
-    "🛑 *Laporan Pesan*",
+    "🛑 Laporan Pesan",
     "",
-    `Pelapor: \`${userId}\``,
-    `Terlapor: \`${partnerId || "-"}\``,
+    `Pelapor: ${userId}`,
+    `Terlapor: ${partnerId || "-"}`,
     `Tipe: ${messageType}`,
     similarCount > 0
       ? `Jumlah laporan lain dengan OCR hash sama (di luar ini): ${similarCount}`
@@ -438,33 +438,23 @@ async function handleReport(ctx) {
   ].filter(Boolean);
 
   if (text) {
-    baseLinesEn.push("*Text:*\n```", text.slice(0, 1900), "```");
-    baseLinesId.push("*Teks:*\n```", text.slice(0, 1900), "```");
+    baseLinesEn.push("Text:", text.slice(0, 1900));
+    baseLinesId.push("Teks:", text.slice(0, 1900));
   }
 
   if (ocrText) {
-    baseLinesEn.push(
-      "",
-      "*OCR text (if any):*",
-      "```",
-      ocrText.slice(0, 1900),
-      "```"
-    );
-    baseLinesId.push(
-      "",
-      "*Teks OCR (jika ada):*",
-      "```",
-      ocrText.slice(0, 1900),
-      "```"
-    );
+    baseLinesEn.push("", "OCR text (if any):", ocrText.slice(0, 1900));
+    baseLinesId.push("", "Teks OCR (jika ada):", ocrText.slice(0, 1900));
   }
 
   const textAdminEn = baseLinesEn.join("\n");
   const textAdminId = baseLinesId.join("\n");
 
-  const actionKeyboard = partnerId
-    ? new InlineKeyboard().text("🚫 Ban media", `admin_banmedia:${partnerId}:${mediaUniqueId || "-"}:${ocrHash || "-"}:${textHash || "-"}`)
-    : undefined;
+  const reportedIdForAction = partnerId || 0;
+  const actionKeyboard = new InlineKeyboard().text(
+    "🚫 Ban media",
+    `admin_banmedia:${reportedIdForAction}:${mediaUniqueId || "-"}:${ocrHash || "-"}:${textHash || "-"}`
+  );
 
   // Kirim ke grup admin (REPORT_LOG_CHAT_ID)
   if (REPORT_LOG_CHAT_ID) {
@@ -473,7 +463,6 @@ async function handleReport(ctx) {
         REPORT_LOG_CHAT_ID,
         lang === "en" ? textAdminEn : textAdminId,
         {
-          parse_mode: "Markdown",
           reply_markup: actionKeyboard,
           message_thread_id:
             REPORT_LOG_TOPIC_ID && REPORT_LOG_TOPIC_ID > 0
@@ -482,6 +471,7 @@ async function handleReport(ctx) {
         }
       );
 
+      // forward/copy pesan asli ke grup admin supaya bisa dilihat
       try {
         await bot.api.copyMessage(
           REPORT_LOG_CHAT_ID,
@@ -508,7 +498,7 @@ async function handleReport(ctx) {
     try {
       const aLang = await getUserLang(adminId);
       const t = aLang === "en" ? textAdminEn : textAdminId;
-      await bot.api.sendMessage(adminId, t, { parse_mode: "Markdown" });
+      await bot.api.sendMessage(adminId, t);
     } catch (e) {
       // abaikan error kirim ke admin tertentu
     }
