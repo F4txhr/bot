@@ -2151,6 +2151,51 @@ async function main() {
 
     const msg = ctx.message;
 
+    // Cek apakah konten sudah diblokir (ban media/text)
+    let mediaUniqueId = "";
+    let textHash = "";
+    if (msg.text) {
+      const t = msg.text.trim();
+      if (t.length > 0) {
+        textHash = crypto
+          .createHash("sha256")
+          .update(t.toLowerCase())
+          .digest("hex");
+      }
+    } else if (msg.photo && msg.photo.length > 0) {
+      const photo = msg.photo[msg.photo.length - 1];
+      mediaUniqueId = photo.file_unique_id;
+    } else if (msg.sticker) {
+      mediaUniqueId = msg.sticker.file_unique_id;
+    } else if (msg.video) {
+      mediaUniqueId = msg.video.file_unique_id;
+    } else if (msg.document) {
+      mediaUniqueId = msg.document.file_unique_id;
+    } else if (msg.voice) {
+      mediaUniqueId = msg.voice.file_unique_id;
+    }
+
+    if (mediaUniqueId || textHash) {
+      try {
+        const banned = await isMediaBanned({
+          mediaUniqueId,
+          ocrHash: "",
+          textHash,
+        });
+        if (banned) {
+          const lang = await getUserLang(userId);
+          const blockMsg =
+            lang === "en"
+              ? "⚠️ This content is blocked and was not forwarded to your partner."
+              : "⚠️ Konten ini diblokir dan tidak diteruskan ke pasanganmu.";
+          await ctx.reply(blockMsg);
+          return;
+        }
+      } catch (e) {
+        console.error("Gagal cek banned media:", e.message);
+      }
+    }
+
     try {
       if (msg.text) {
         await bot.api.sendMessage(partnerId, msg.text);
