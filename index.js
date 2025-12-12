@@ -1,5 +1,6 @@
 const { Bot, InlineKeyboard } = require("grammy");
 const Tesseract = require("tesseract.js");
+const crypto = require("crypto");
 require("dotenv").config();
 
 const {
@@ -305,68 +306,178 @@ async function stopChat(ctx) {
 
 async function handleReport(ctx) {
   const userId = ctx.from.id;
-  const partnerId = await getPartner(userId);
-
   const lang = await getUserLang(userId);
 
-  if (!partnerId) {
+  const replied = ctx.message.reply_to_message;
+  if (!replied) {
     const msg =
       lang === "en"
-        ? "ℹ️ You are not currently in a chat, so there is no one to report."
-        : "ℹ️ Kamu tidak sedang dalam obrolan, tidak ada yang bisa dilaporkan.";
+        ? "ℹ️ To report a message, reply to that message with /report.\nThis will send the content to admin for review."
+        : "ℹ️ Untuk melaporkan pesan, balas pesan yang ingin kamu laporkan dengan /report.\nIsi pesan akan dikirim ke admin untuk ditinjau.";
     await ctx.reply(msg);
     return;
   }
 
-  const total = await addReport(partnerId, userId, 24);
+  const partnerId = await getPartner(userId);
+
+  // Analisis jenis pesan yang direport
+  const m = replied;
+  let messageType = "unknown";
+  let text = "";
+  let ocrText = "";
+  let ocrHash = "";
+  let mediaFileId = "";
+  let mediaUniqueId = "";
+
+  if (m.text) {
+    messageType = "text";
+    text = m.text;
+  } else if (m.photo && m.photo.length > 0) {
+    messageType = "photo";
+    const photo = m.photo[m.photo.length - 1];
+    mediaFileId = photo.file_id;
+    mediaUniqueId = photo.file_unique_id;
+    ocrText = await ocrPhotoFromTelegram(ctx, photo);
+  } else if (m.sticker) {
+    messageType = "sticker";
+    mediaFileId = m.sticker.file_id;
+    mediaUniqueId = m.sticker.file_unique_id;
+    if (m.sticker.thumb) {
+      ocrText = await ocrPhotoFromTelegram(ctx, m.sticker.thumb);
+    }
+  } else if (m.video) {
+    messageType = "video";
+    mediaFileId = m.video.file_id;
+    mediaUniqueId = m.video.file_unique_id;
+    if (m.video.thumb) {
+      ocrText = await ocrPhotoFromTelegram(ctx, m.video.thumb);
+    }
+  } else if (m.document) {
+    messageType = "document";
+    mediaFileId = m.document.file_id;
+    mediaUniqueId = m.document.file_unique_id;
+    if (m.document.thumb) {
+      ocrText = await ocrPhotoFromTelegram(ctx, m.document.thumb);
+    }
+  } else if (m.voice) {
+    messageType = "voice";
+    mediaFileId = m.voice.file_id;
+    mediaUniqueId = m.voice.file_unique_id;
+  }
+
+  if (ocrText && ocrText.trim().length > 0) {
+    ocrHash = crypto
+      .createHash("sha256")
+      .update(ocrText.trim().toLowerCase())
+      .digest("hex");
+  }
+
+  await logReportedMessage({
+    reporterId: userId,
+    partnerId,
+    messageType,
+    text,
+    ocrText,
+    ocrHash,
+    mediaFileId,
+    mediaUniqueId,
+  });
+
+  let similarCount = 0;
+  if (ocrHash) {
+    similarCount = await countSimilarReports(ocrHash);
+    if (similarCount > 0) {
+      // current report sudah termasuk, kurangi 1 untuk "other" reports
+      similarCount = Math.max(similarCount - 1, 0);
+  }
+  }
 
   const msgUser =
     lang === "en"
-      ? "✅ Your report has been recorded. Thank you for helping keep the community safe."
-      : "✅ Laporanmu sudah direkam. Terima kasih sudah membantu menjaga komunitas.";
+      ? "✅ Your report has been sent to the admin. They will review the content and take action if needed."
+      : "✅ Laporanmu sudah dikirim ke admin. Admin akan meninjau isi pesan dan mengambil tindakan jika perlu.";
 
   await ctx.reply(msgUser);
 
-  if (total >= AUTO_BAN_REPORTS) {
-    await banUser(partnerId, "Auto-ban by reports");
-    try {
-      await bot.api.sendMessage(
-        partnerId,
-        "❌ Akunmu diblokir karena terlalu banyak laporan dari pengguna lain."
-      );
-    } catch (_) {}
-    await clearPair(userId);
-  }
-
-  // Log ke grup report jika dikonfigurasi
+  // Kirim ke grup admin
   if (REPORT_LOG_CHAT_ID) {
-    const reportTextId = [
-      "🛑 *Laporan Pengguna*",
-      "",
-      `Pelapor: \`${userId}\``,
-      `Dilaporkan: \`${partnerId}\``,
-      `Total laporan 24 jam terakhir: ${total}`,
-    ].join("\n");
-    const reportTextEn = [
-      "🛑 *User Report*",
+    const baseLinesEn = [
+      "🛑 *Message Report*",
       "",
       `Reporter: \`${userId}\``,
-      `Reported user: \`${partnerId}\``,
-      `Total reports in last 24h: ${total}`,
-    ].join("\n");
-    const adminLang = await getUserLang(userId);
-    try {
-      await bot.api.sendMessage(
-        REPORT_LOG_CHAT_ID,
-        adminLang === "en" ? reportTextEn : reportTextId,
-        {
-          parse_mode: "Markdown",
-          message_thread_id:
-            REPORT_LOG_TOPIC_ID && REPORT_LOG_TOPIC_ID > 0
-              ? REPORT_LOG_TOPIC_ID
-              : undefined,
-        }
+      `Partner (if any): \`${partnerId || "-"}\``,
+      `Type: ${messageType}`,
+      similarCount > 0
+        ? `Similar reports with same OCR hash (excluding this): ${similarCount}`
+        : "",
+      "",
+    ].filter(Boolean);
+
+    const baseLinesId = [
+      "🛑 *Laporan Pesan*",
+      "",
+      `Pelapor: \`${userId}\``,
+      `Partner (jika ada): \`${partnerId || "-"}\``,
+      `Tipe: ${messageType}`,
+      similarCount > 0
+        ? `Jumlah laporan lain dengan OCR hash sama (di luar ini): ${similarCount}`
+        : "",
+      "",
+    ].filter(Boolean);
+
+    if (text) {
+      baseLinesEn.push("*Text:*\n```", text.slice(0, 1900), "```");
+      baseLinesId.push("*Teks:*\n```", text.slice(0, 1900), "```");
+    }
+
+    if (ocrText) {
+      baseLinesEn.push(
+        "",
+        "*OCR text (if any):*",
+        "```",
+        ocrText.slice(0, 1900),
+        "```"
       );
+      baseLinesId.push(
+        "",
+        "*Teks OCR (jika ada):*",
+        "```",
+        ocrText.slice(0, 1900),
+        "```"
+      );
+    }
+
+    const textAdmin =
+      lang === "en"
+        ? baseLinesEn.join("\n")
+        : baseLinesId.join("\n");
+
+    try {
+      const sent = await bot.api.sendMessage(REPORT_LOG_CHAT_ID, textAdmin, {
+        parse_mode: "Markdown",
+        message_thread_id:
+          REPORT_LOG_TOPIC_ID && REPORT_LOG_TOPIC_ID > 0
+            ? REPORT_LOG_TOPIC_ID
+            : undefined,
+      });
+
+      // forward/copy pesan asli ke grup admin supaya bisa dilihat
+      try {
+        await bot.api.copyMessage(
+          REPORT_LOG_CHAT_ID,
+          ctx.chat.id,
+          replied.message_id,
+          {
+            reply_to_message_id: sent.message_id,
+            message_thread_id:
+              REPORT_LOG_TOPIC_ID && REPORT_LOG_TOPIC_ID > 0
+                ? REPORT_LOG_TOPIC_ID
+                : undefined,
+          }
+        );
+      } catch (e) {
+        console.error("Gagal copy pesan report ke grup admin:", e.message);
+      }
     } catch (err) {
       console.error("Gagal kirim log report:", err.message);
     }
