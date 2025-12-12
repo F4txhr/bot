@@ -38,6 +38,8 @@ const {
   markDiscountUsed,
   disableDiscountCode,
   getAllUserIdsForBroadcast,
+  logReportedMessage,
+  countSimilarReports,
 } = require("./db");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
