@@ -1440,7 +1440,25 @@ async function main() {
 
     // turunkan trust user terlapor jika diketahui
     if (reportedUserId) {
-      await adjustUserTrust(reportedUserId, -10);
+      const trust = await adjustUserTrust(reportedUserId, -10);
+
+      // jika laporan valid terkumpul >= 15 kali, auto-ban user
+      if (trust && trust.total_reports_valid >= 15) {
+        await banUser(
+          reportedUserId,
+          "Auto-ban: too many valid content reports"
+        );
+
+        try {
+          const uLang = await getUserLang(reportedUserId);
+          await bot.api.sendMessage(
+            reportedUserId,
+            uLang === "en"
+              ? "❌ Your account has been blocked automatically because there are too many valid reports on your content."
+              : "❌ Akunmu otomatis diblokir karena terlalu banyak laporan valid terhadap kontenmu."
+          );
+        } catch (_) {}
+      }
     }
 
     await ctx.answerCallbackQuery({
