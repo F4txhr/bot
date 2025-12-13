@@ -425,6 +425,9 @@ async function handleReport(ctx) {
     similarCount > 0
       ? `Similar reports with same OCR hash (excluding this): ${similarCount}`
       : "",
+    partnerId
+      ? "Note: banning this media will also increment the user's valid report count (auto-ban at 15)."
+      : "",
     "",
   ].filter(Boolean);
 
@@ -436,6 +439,9 @@ async function handleReport(ctx) {
     `Tipe: ${messageType}`,
     similarCount > 0
       ? `Jumlah laporan lain dengan OCR hash sama (di luar ini): ${similarCount}`
+      : "",
+    partnerId
+      ? "Catatan: ban media akan menambah jumlah laporan valid user (auto-ban di 15 laporan)."
       : "",
     "",
   ].filter(Boolean);
@@ -2012,7 +2018,7 @@ async function main() {
           )}`
         : "• Terakhir aktif: -",
       `• Trust score: ${trust.score} / 100`,
-      `• Total laporan valid: ${trust.total_reports_valid || 0}`,
+      `• Total laporan valid: ${trust.total_reports_valid || 0} / 15`,
     ];
 
     const linesEn = [
@@ -2033,7 +2039,7 @@ async function main() {
           )}`
         : "• Last active: -",
       `• Trust score: ${trust.score} / 100`,
-      `• Total valid reports: ${trust.total_reports_valid || 0}`,
+      `• Total valid reports: ${trust.total_reports_valid || 0} / 15`,
     ];
 
     await ctx.reply(lang === "en" ? linesEn.join("\n") : linesId.join("\n"), {
