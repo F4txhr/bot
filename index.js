@@ -1455,6 +1455,7 @@ async function main() {
           "Auto-ban: too many valid content reports"
         );
 
+        // Beritahu user
         try {
           const uLang = await getUserLang(reportedUserId);
           await bot.api.sendMessage(
@@ -1464,6 +1465,49 @@ async function main() {
               : "❌ Akunmu otomatis diblokir karena terlalu banyak laporan valid terhadap kontenmu."
           );
         } catch (_) {}
+
+        // Beritahu grup admin jika ada
+        const autoBanLinesId = [
+          "🛑 *Auto-ban pengguna*",
+          "",
+          `• User: ${reportedUserId}`,
+          `• Total laporan valid: ${trust.total_reports_valid} / 15`,
+          "• Alasan: terlalu banyak laporan valid terhadap konten.",
+        ];
+        const autoBanLinesEn = [
+          "🛑 *User auto-banned*",
+          "",
+          `• User: ${reportedUserId}`,
+          `• Total valid reports: ${trust.total_reports_valid} / 15`,
+          "• Reason: too many valid reports on content.",
+        ];
+        const autoBanTextId = autoBanLinesId.join("\n");
+        const autoBanTextEn = autoBanLinesEn.join("\n");
+
+        if (REPORT_LOG_CHAT_ID) {
+          try {
+            await bot.api.sendMessage(
+              REPORT_LOG_CHAT_ID,
+              autoBanTextId,
+              {
+                parse_mode: "Markdown",
+                message_thread_id:
+                  REPORT_LOG_TOPIC_ID && REPORT_LOG_TOPIC_ID > 0
+                    ? REPORT_LOG_TOPIC_ID
+                    : undefined,
+              }
+            );
+          } catch (_) {}
+        }
+
+        // DM ke setiap admin
+        for (const admin of ADMIN_IDS) {
+          try {
+            const aLang = await getUserLang(admin);
+            const t = aLang === "en" ? autoBanTextEn : autoBanTextId;
+            await bot.api.sendMessage(admin, t, { parse_mode: "Markdown" });
+          } catch (_) {}
+        }
       }
     }
 
