@@ -46,6 +46,10 @@ const {
   isMediaBanned,
   getUserTrust,
   adjustUserTrust,
+  getUserProfile,
+  setMyGender,
+  setTargetGender,
+  clearTargetGender,
 } = require("./db");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -266,6 +270,8 @@ async function startSearch(ctx) {
     return;
   }
 
+  const lang = await getUserLang(userId);
+
   const partnerIdExisting = await getPartner(userId);
   if (partnerIdExisting) {
     await ctx.reply("ℹ️ Kamu sudah dalam obrolan. Gunakan /stop untuk keluar.");
@@ -274,7 +280,55 @@ async function startSearch(ctx) {
 
   await removeFromQueue(userId);
 
-  const otherId = await popFromQueueExcept(userId);
+  // cek preferensi gender jika user premium
+  let targetGender = null;
+  const premium = await isPremium(userId);
+  const profile = await getUserProfile(userId);
+  if (!premium && profile.target_gender) {
+    // premium sudah habis, reset preferensi
+    await clearTargetGender(userId);
+  } else if (premium) {
+    targetGender = profile.target_gender || null;
+  }
+
+  let otherId = null;
+
+  if (premium && targetGender) {
+    // coba cari kandidat yang gender-nya cocok
+    try {
+      // ambil beberapa kandidat dari queue_free
+      const { data: queueData, error } = await supabase
+        .from("queue_free")
+        .select("user_id")
+        .neq("user_id", userId)
+        .limit(20);
+
+      if (!error && Array.isArray(queueData) && queueData.length > 0) {
+        for (const row of queueData) {
+          const candidateId = Number(row.user_id);
+          if (!candidateId || candidateId === userId) continue;
+          const candProfile = await getUserProfile(candidateId);
+          if (!candProfile.gender) continue;
+          if (
+            targetGender === candProfile.gender ||
+            targetGender === "other"
+          ) {
+            // hapus kandidat ini dari queue dan gunakan sebagai partner
+            await removeFromQueue(candidateId);
+            otherId = candidateId;
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Gagal mencari partner berdasar gender:", e.message);
+    }
+  }
+
+  // fallback ke matching biasa jika tidak ditemukan
+  if (!otherId) {
+    otherId = await popFromQueueExcept(userId);
+  }
 
   if (otherId && otherId !== userId) {
     await setPair(userId, otherId);
@@ -286,7 +340,11 @@ async function startSearch(ctx) {
     );
   } else {
     await pushToQueue(userId);
-    await ctx.reply("🔍 Kamu masuk antrian, menunggu pasangan...");
+    const msg =
+      lang === "en"
+        ? "🔍 You are in the queue, waiting for a partner..."
+        : "🔍 Kamu masuk antrian, menunggu pasangan...";
+    await ctx.reply(msg);
   }
 }
 
@@ -965,6 +1023,97 @@ async function main() {
 
   bot.command("premium", async (ctx) => {
     await handlePremium(ctx);
+  });
+
+  // Set gender profil user (mygender)
+  bot.command("mygender", async (ctx) => {
+    const userId = ctx.from.id;
+    const lang = await getUserLang(userId);
+    const args = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+
+    if (args.length < 1) {
+      const msg =
+        lang === "en"
+          ? "Usage: /mygender male|female|other"
+          : "Cara pakai: /mygender male|female|other";
+      await ctx.reply(msg);
+      return;
+    }
+
+    const g = args[0].toLowerCase();
+    if (!["male", "female", "other"].includes(g)) {
+      const msg =
+        lang === "en"
+          ? "Gender must be one of: male, female, other."
+          : "Gender harus salah satu dari: male, female, other.";
+      await ctx.reply(msg);
+      return;
+    }
+
+    await setMyGender(userId, g);
+
+    const msg =
+      lang === "en"
+        ? `✅ Your gender has been set to *${g}*.`
+        : `✅ Gender kamu diset ke *${g}*.`;
+    await ctx.reply(msg, { parse_mode: "Markdown" });
+  });
+
+  // Set preferensi gender pasangan (target) - khusus premium
+  bot.command("setgender", async (ctx) => {
+    const userId = ctx.from.id;
+    const lang = await getUserLang(userId);
+    const args = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+
+    if (args.length < 1) {
+      const msg =
+        lang === "en"
+          ? "Usage: /setgender male|female|other|any\nThis sets the gender of the partner you want to find (premium only)."
+          : "Cara pakai: /setgender male|female|other|any\nIni mengatur gender pasangan yang ingin kamu cari (khusus premium).";
+      await ctx.reply(msg);
+      return;
+    }
+
+    const isPrem = await isPremium(userId);
+    if (!isPrem) {
+      const msg =
+        lang === "en"
+          ? "🔒 Only premium users can set partner gender preference. Use /premium to see how to upgrade."
+          : "🔒 Hanya pengguna premium yang bisa mengatur preferensi gender pasangan. Gunakan /premium untuk info upgrade.";
+      await ctx.reply(msg);
+      // reset jika ada preferensi lama
+      await clearTargetGender(userId);
+      return;
+    }
+
+    let target = args[0].toLowerCase();
+    if (target === "any" || target === "all") target = "any";
+    if (!["male", "female", "other", "any"].includes(target)) {
+      const msg =
+        lang === "en"
+          ? "Target gender must be one of: male, female, other, any."
+          : "Gender target harus salah satu dari: male, female, other, any.";
+      await ctx.reply(msg);
+      return;
+    }
+
+    if (target === "any") {
+      await clearTargetGender(userId);
+      const msg =
+        lang === "en"
+          ? "✅ Your partner preference has been reset to *random (any)*."
+          : "✅ Preferensi pasanganmu direset ke *acak (any)*.";
+      await ctx.reply(msg, { parse_mode: "Markdown" });
+      return;
+    }
+
+    await setTargetGender(userId, target);
+
+    const msg =
+      lang === "en"
+        ? `✅ Your partner preference has been set to *${target}*.\nIt will stay active while you are premium.`
+        : `✅ Preferensi pasanganmu diset ke *${target}*.\nPreferensi ini akan aktif selama kamu masih premium.`;
+    await ctx.reply(msg, { parse_mode: "Markdown" });
   });
 
   // Klaim & cek diskon

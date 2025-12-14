@@ -1238,6 +1238,98 @@ async function adjustUserTrust(userId, delta) {
   return { score: newScore, total_reports_valid: current.total_reports_valid };
 }
 
+/** ========== USER GENDER PROFILE ========== */
+/*
+ * Schema yang direkomendasikan:
+ *
+ * create table if not exists user_profile (
+ *   user_id bigint primary key,
+ *   gender text,         -- 'male' | 'female' | 'other'
+ *   target_gender text,  -- 'male' | 'female' | 'other' | 'any'
+ *   updated_at timestamptz default now()
+ * );
+ */
+
+async function getUserProfile(userId) {
+  if (!userId) {
+    return { gender: null, target_gender: null };
+  }
+  const { data, error } = await supabase
+    .from("user_profile")
+    .select("gender,target_gender")
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase getUserProfile error:", error.message);
+    return { gender: null, target_gender: null };
+  }
+
+  if (!data) {
+    return { gender: null, target_gender: null };
+  }
+
+  return {
+    gender: data.gender || null,
+    target_gender: data.target_gender || null,
+  };
+}
+
+async function setMyGender(userId, gender) {
+  if (!userId) return;
+  const allowed = ["male", "female", "other"];
+  const norm = (gender || "").toLowerCase();
+  if (!allowed.includes(norm)) return;
+  const nowIso = new Date().toISOString();
+
+  const { error } = await supabase.from("user_profile").upsert(
+    {
+      user_id: userId,
+      gender: norm,
+      updated_at: nowIso,
+    },
+    { onConflict: "user_id" }
+  );
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase setMyGender error:", error.message);
+  }
+}
+
+async function setTargetGender(userId, targetGender) {
+  if (!userId) return;
+  const allowed = ["male", "female", "other", "any"];
+  const norm = (targetGender || "").toLowerCase();
+  if (!allowed.includes(norm)) return;
+  const nowIso = new Date().toISOString();
+
+  const { error } = await supabase.from("user_profile").upsert(
+    {
+      user_id: userId,
+      target_gender: norm === "any" ? null : norm,
+      updated_at: nowIso,
+    },
+    { onConflict: "user_id" }
+  );
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase setTargetGender error:", error.message);
+  }
+}
+
+async function clearTargetGender(userId) {
+  if (!userId) return;
+  const { error } = await supabase
+    .from("user_profile")
+    .update({ target_gender: null })
+    .eq("user_id", userId);
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase clearTargetGender error:", error.message);
+  }
+}
+
 module.exports = {
   supabase,
   initDb,
@@ -1292,4 +1384,9 @@ module.exports = {
   // trust
   getUserTrust,
   adjustUserTrust,
+  // gender profile
+  getUserProfile,
+  setMyGender,
+  setTargetGender,
+  clearTargetGender,
 };
