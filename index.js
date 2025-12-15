@@ -146,7 +146,7 @@ function censorText(text) {
   const normWords = normalized.split(/\s+/);
   const censored = [];
 
-  for (let i = 0; i &lt; words.length; i++) {
+  for (let i = 0; i < words.length; i++) {
     const raw = words[i];
     const clean = (normWords[i] || "")
       .toLowerCase()
