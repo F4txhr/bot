@@ -104,6 +104,62 @@ const DANGEROUS_EXTENSIONS = [
   ".com",
 ];
 
+// daftar kata kasar berat untuk sensor teks
+const BAD_WORDS = new Set([
+  "anjing",
+  "anjg",
+  "babi",
+  "bangsat",
+  "kontol",
+  "memek",
+  "fuck",
+  "bitch",
+  "dick",
+]);
+
+function normalizeTextForBadWords(text) {
+  if (!text) return "";
+  // hilangkan aksen, ubah ke ASCII sederhana
+  const normalized = text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  // ganti beberapa leetspeak
+  const replacements = {
+    "1": "i",
+    "3": "e",
+    "4": "a",
+    "0": "o",
+    "5": "s",
+    "7": "t",
+  };
+  let result = normalized;
+  for (const [k, v] of Object.entries(replacements)) {
+    result = result.replace(new RegExp(k, "g"), v);
+  }
+  return result;
+}
+
+function censorText(text) {
+  if (!text) return text;
+  const normalized = normalizeTextForBadWords(text);
+  const words = text.split(/\s+/);
+  const normWords = normalized.split(/\s+/);
+  const censored = [];
+
+  for (let i = 0; i &lt; words.length; i++) {
+    const raw = words[i];
+    const clean = (normWords[i] || "")
+      .toLowerCase()
+      .replace(/[^a-z]/g, "");
+    if (BAD_WORDS.has(clean)) {
+      censored.push("*".repeat(raw.length));
+    } else {
+      censored.push(raw);
+    }
+  }
+  return censored.join(" ");
+}
+
 function isAdmin(userId) {
   return ADMIN_IDS.includes(userId);
 }
@@ -2688,10 +2744,11 @@ async function main() {
 
     try {
       if (msg.text) {
-        await bot.api.sendMessage(partnerId, msg.text);
+        const safeText = censorText(msg.text);
+        await bot.api.sendMessage(partnerId, safeText);
       } else if (msg.photo && msg.photo.length > 0) {
         const photo = msg.photo[msg.photo.length - 1];
-        const caption = msg.caption || undefined;
+        const caption = msg.caption ? censorText(msg.caption) : undefined;
         await bot.api.sendPhoto(partnerId, photo.file_id, {
           caption,
         });
@@ -2700,8 +2757,9 @@ async function main() {
       } else if (msg.voice) {
         await bot.api.sendVoice(partnerId, msg.voice.file_id);
       } else if (msg.document) {
+        const caption = msg.caption ? censorText(msg.caption) : undefined;
         await bot.api.sendDocument(partnerId, msg.document.file_id, {
-          caption: msg.caption || undefined,
+          caption,
         });
       } else {
         await ctx.reply("Jenis pesan ini belum didukung sepenuhnya.");
