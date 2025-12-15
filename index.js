@@ -86,6 +86,24 @@ const bot = new Bot(BOT_TOKEN);
 const SEARCH_COOLDOWN_MS = 3000;
 const lastSearchAt = new Map();
 
+// rate limit pesan: maksimal MESSAGE_RATE_LIMIT_MAX pesan per window
+const MESSAGE_RATE_WINDOW_MS = 8000;
+const MESSAGE_RATE_LIMIT_MAX = 10;
+const messageRateBuckets = new Map(); // userId -> { count, resetAt }
+
+// daftar ekstensi file berbahaya untuk dokumen
+const DANGEROUS_EXTENSIONS = [
+  ".exe",
+  ".bat",
+  ".cmd",
+  ".sh",
+  ".js",
+  ".msi",
+  ".scr",
+  ".pif",
+  ".com",
+];
+
 function isAdmin(userId) {
   return ADMIN_IDS.includes(userId);
 }
@@ -264,8 +282,8 @@ async function startSearch(ctx) {
     const lang = await getUserLang(userId);
     const msg =
       lang === "en"
-        ? "❌ Your account is blocked."
-        : "❌ Akunmu diblokir.";
+        ? "Your account is blocked."
+        : "Akunmu diblokir.";
     await ctx.reply(msg);
     return;
   }
@@ -274,7 +292,7 @@ async function startSearch(ctx) {
 
   const partnerIdExisting = await getPartner(userId);
   if (partnerIdExisting) {
-    await ctx.reply("ℹ️ Kamu sudah dalam obrolan. Gunakan /stop untuk keluar.");
+    await ctx.reply("Kamu sudah dalam obrolan. Gunakan /stop untuk keluar.");
     return;
   }
 
@@ -333,17 +351,23 @@ async function startSearch(ctx) {
   if (otherId && otherId !== userId) {
     await setPair(userId, otherId);
 
-    await ctx.reply("✅ Ditemukan pasangan! Mulai ngobrol sekarang.");
+    await ctx.reply(
+      lang === "en"
+        ? "Partner found. Mulai ngobrol sekarang."
+        : "Ditemukan pasangan. Mulai ngobrol sekarang."
+    );
     await bot.api.sendMessage(
       otherId,
-      "✅ Ditemukan pasangan! Mulai ngobrol sekarang."
+      lang === "en"
+        ? "Partner found. Mulai ngobrol sekarang."
+        : "Ditemukan pasangan. Mulai ngobrol sekarang."
     );
   } else {
     await pushToQueue(userId);
     const msg =
       lang === "en"
-        ? "🔍 You are in the queue, waiting for a partner..."
-        : "🔍 Kamu masuk antrian, menunggu pasangan...";
+        ? "You are in the queue, waiting for a partner..."
+        : "Kamu masuk antrian, menunggu pasangan...";
     await ctx.reply(msg);
   }
 }
@@ -2374,8 +2398,31 @@ async function main() {
       const lang = await getUserLang(userId);
       const msg =
         lang === "en"
-          ? "❌ Your account is blocked."
-          : "❌ Akunmu diblokir.";
+          ? "Your account is blocked."
+          : "Akunmu diblokir.";
+      await ctx.reply(msg);
+      return;
+    }
+
+    // rate limit pesan
+    const now = Date.now();
+    const bucket = messageRateBuckets.get(userId) || {
+      count: 0,
+      resetAt: now + MESSAGE_RATE_WINDOW_MS,
+    };
+    if (now > bucket.resetAt) {
+      bucket.count = 0;
+      bucket.resetAt = now + MESSAGE_RATE_WINDOW_MS;
+    }
+    bucket.count += 1;
+    messageRateBuckets.set(userId, bucket);
+
+    if (bucket.count > MESSAGE_RATE_LIMIT_MAX) {
+      const lang = await getUserLang(userId);
+      const msg =
+        lang === "en"
+          ? "You are sending messages too fast. Please wait a moment."
+          : "Kamu mengirim pesan terlalu cepat. Tunggu sebentar.";
       await ctx.reply(msg);
       return;
     }
@@ -2613,13 +2660,29 @@ async function main() {
           const lang = await getUserLang(userId);
           const blockMsg =
             lang === "en"
-              ? "⚠️ This content is blocked and was not forwarded to your partner."
-              : "⚠️ Konten ini diblokir dan tidak diteruskan ke pasanganmu.";
+              ? "This content is blocked and was not forwarded to your partner."
+              : "Konten ini diblokir dan tidak diteruskan ke pasanganmu.";
           await ctx.reply(blockMsg);
           return;
         }
       } catch (e) {
         console.error("Gagal cek banned media:", e.message);
+      }
+    }
+
+    // Blok file berbahaya untuk dokumen
+    if (msg.document && msg.document.file_name) {
+      const name = msg.document.file_name.toLowerCase();
+      if (
+        DANGEROUS_EXTENSIONS.some((ext) => name.endsWith(ext))
+      ) {
+        const lang = await getUserLang(userId);
+        const warn =
+          lang === "en"
+            ? "This type of file is not allowed."
+            : "Tipe file ini tidak diizinkan.";
+        await ctx.reply(warn);
+        return;
       }
     }
 
@@ -2646,7 +2709,7 @@ async function main() {
     } catch (err) {
       console.error("Gagal forward ke partner:", err.message);
       await ctx.reply(
-        "⚠️ Terjadi kesalahan saat mengirim pesan ke pasangan. Mungkin dia sudah offline."
+        "Terjadi kesalahan saat mengirim pesan ke pasangan. Mungkin dia sudah offline."
       );
       await clearPair(userId);
     }
