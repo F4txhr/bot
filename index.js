@@ -1505,7 +1505,6 @@ async function main() {
       await ctx.reply(msg);
     }
   });
-  });
 
   // Callback pembayaran manual/Trakteer
   bot.callbackQuery(/^pay_manual:(.+)$/, async (ctx) => {
