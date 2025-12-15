@@ -943,7 +943,17 @@ async function main() {
           "/payment on|off [manual|trakteer] - enable/disable payment methods",
           "/grantpremium <user_id> <days> - manually extend premium",
           "/discount_add CODE PERCENT [MAX_USES] [HOURS] [MIN_AMOUNT] - create discount code",
-          "/payhistory <user_id> [limit] - view another user's payment history"
+          "/discount_disable CODE [on|off] - enable/disable discount code",
+          "/payhistory <user_id> [limit] - view another user's payment history",
+          "/user <user_id> - show user status",
+          "/ban <user_id> [reason] - ban user",
+          "/unban <user_id> - unban user",
+          "/adminstats - show global statistics",
+          "/list_banned - list banned users",
+          "/broadcast <message> - send broadcast to active users",
+          "/giftpremium <count> <days> - randomly gift premium to active free users",
+          "/discountstats - show discount codes summary",
+          "/discountusers <code> - list users who used a discount code"
         );
       }
 
@@ -975,7 +985,17 @@ async function main() {
           "/payment on|off [manual|trakteer] - hidup/matikan metode pembayaran",
           "/grantpremium <user_id> <hari> - tambah masa premium user secara manual",
           "/discount_add KODE PERSEN [MAX_USES] [JAM] [MIN_NOMINAL] - buat kode diskon",
-          "/payhistory <user_id> [limit] - lihat riwayat pembayaran user lain"
+          "/discount_disable KODE [on|off] - aktif/nonaktifkan kode diskon",
+          "/payhistory <user_id> [limit] - lihat riwayat pembayaran user lain",
+          "/user <user_id> - lihat status user",
+          "/ban <user_id> [alasan] - blokir user",
+          "/unban <user_id> - buka blokir user",
+          "/adminstats - statistik global",
+          "/list_banned - daftar user yang diblokir",
+          "/broadcast <pesan> - kirim pengumuman ke user aktif",
+          "/giftpremium <jumlah> <hari> - bagi-bagi premium ke user gratis yang aktif",
+          "/discountstats - ringkasan kode diskon",
+          "/discountusers <kode> - daftar user yang memakai kode diskon"
         );
       }
 
@@ -1225,8 +1245,8 @@ async function main() {
       if (!code) {
         const text =
           lang === "en"
-            ? "ℹ️ You don't have any active discount code.\nAsk admin or use /discount CODE to claim one."
-            : "ℹ️ Kamu tidak punya kode diskon aktif.\nTanya admin atau gunakan /discount KODE untuk klaim.";
+            ? "You don't have any active discount code.\nAsk admin or use /discount CODE to claim one."
+            : "Kamu tidak punya kode diskon aktif.\nTanya admin atau gunakan /discount KODE untuk klaim.";
         await ctx.reply(text);
         return;
       }
@@ -1235,8 +1255,8 @@ async function main() {
         await clearUserDiscount(userId);
         const text =
           lang === "en"
-            ? "ℹ️ Your discount code is no longer valid."
-            : "ℹ️ Kode diskonmu sudah tidak berlaku.";
+            ? "Your discount code is no longer valid."
+            : "Kode diskonmu sudah tidak berlaku.";
         await ctx.reply(text);
         return;
       }
@@ -1276,26 +1296,22 @@ async function main() {
       const text =
         lang === "en"
           ? [
-              "💸 Your active discount:",
+              "Your active discount code:",
               "",
               `• Code: \`${info.code}\``,
               `• Percent: ${info.percent}%`,
               minLine,
               expLine,
-              "",
-              "Use it on your next payment (manual or Trakteer).",
             ]
               .filter(Boolean)
               .join("\n")
           : [
-              "💸 Kode diskon aktifmu:",
+              "Kode diskon aktif kamu:",
               "",
               `• Kode: \`${info.code}\``,
               `• Diskon: ${info.percent}%`,
               minLine,
               expLine,
-              "",
-              "Gunakan saat pembayaran berikutnya (manual atau Trakteer).",
             ]
               .filter(Boolean)
               .join("\n");
@@ -1309,8 +1325,8 @@ async function main() {
     if (!info) {
       const text =
         lang === "en"
-          ? "❌ Discount code is invalid, expired, or quota has been used."
-          : "❌ Kode diskon tidak valid, kadaluarsa, atau kuotanya sudah habis.";
+          ? "Discount code is invalid, expired, or quota has been used."
+          : "Kode diskon tidak valid, kadaluarsa, atau kuotanya sudah habis.";
       await ctx.reply(text);
       return;
     }
@@ -1335,7 +1351,7 @@ async function main() {
     const text =
       lang === "en"
         ? [
-            "✅ Discount code applied successfully.",
+            "Discount code applied successfully.",
             "",
             `• Code: \`${info.code}\``,
             `• Percent: ${info.percent}%`,
@@ -1345,7 +1361,7 @@ async function main() {
             .filter(Boolean)
             .join("\n")
         : [
-            "✅ Kode diskon berhasil dipasang.",
+            "Kode diskon berhasil dipasang.",
             "",
             `• Kode: \`${info.code}\``,
             `• Diskon: ${info.percent}%`,
@@ -1356,6 +1372,139 @@ async function main() {
             .join("\n");
 
     await ctx.reply(text, { parse_mode: "Markdown" });
+  });
+
+  // Admin: discount stats summary
+  bot.command("discountstats", async (ctx) => {
+    const adminId = ctx.from.id;
+    if (!isAdmin(adminId)) return;
+    const lang = await getUserLang(adminId);
+
+    try {
+      const { data, error } = await supabase
+        .from("discount_codes")
+        .select(
+          "code,percent,max_uses,used,min_amount,expire_at,disabled"
+        );
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        const msg =
+          lang === "en"
+            ? "No discount codes found."
+            : "Tidak ada kode diskon.";
+        await ctx.reply(msg);
+        return;
+      }
+
+      const lines = [];
+      for (const row of data) {
+        const maxUses = Number(row.max_uses || 0);
+        const used = Number(row.used || 0);
+        const minAmt = Number(row.min_amount || 0);
+        const disabled = row.disabled ? true : false;
+        let expPart = "";
+        if (row.expire_at) {
+          const exp = new Date(row.expire_at);
+          expPart =
+            lang === "en"
+              ? `expires: ${exp.toLocaleString("en-US")}`
+              : `berlaku sampai: ${exp.toLocaleString("id-ID")}`;
+        } else {
+          expPart =
+            lang === "en"
+              ? "expires: (no expiry)"
+              : "berlaku sampai: (tanpa batas)";
+        }
+
+        if (lang === "en") {
+          lines.push(
+            "",
+            `Code: ${row.code}`,
+            `- Percent: ${row.percent}%`,
+            `- Uses: ${used}/${maxUses > 0 ? maxUses : "unlimited"}`,
+            `- Min amount: Rp ${minAmt.toLocaleString("id-ID")}`,
+            `- Status: ${disabled ? "disabled" : "active"}`,
+            `- ${expPart}`
+          );
+        } else {
+          lines.push(
+            "",
+            `Kode: ${row.code}`,
+            `- Diskon: ${row.percent}%`,
+            `- Pemakaian: ${used}/${maxUses > 0 ? maxUses : "tanpa batas"}`,
+            `- Minimal nominal: Rp ${minAmt.toLocaleString("id-ID")}`,
+            `- Status: ${disabled ? "dinonaktifkan" : "aktif"}`,
+            `- ${expPart}`
+          );
+        }
+      }
+
+      await ctx.reply(lines.join("\n").trim());
+    } catch (err) {
+      const msg =
+        lang === "en"
+          ? "Cannot load discount stats right now."
+          : "Statistik diskon tidak dapat dimuat saat ini.";
+      await ctx.reply(msg);
+    }
+  });
+
+  // Admin: list users who used a discount code
+  bot.command("discountusers", async (ctx) => {
+    const adminId = ctx.from.id;
+    if (!isAdmin(adminId)) return;
+    const lang = await getUserLang(adminId);
+    const args = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+
+    if (args.length < 1) {
+      const msg =
+        lang === "en"
+          ? "Usage: /discountusers <code>"
+          : "Cara pakai: /discountusers <kode>";
+      await ctx.reply(msg);
+      return;
+    }
+
+    const rawCode = args[0];
+    const code = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+    try {
+      const { data, error } = await supabase
+        .from("user_discounts")
+        .select("user_id,code")
+        .eq("code", code);
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        const msg =
+          lang === "en"
+            ? `No users found for code ${code}.`
+            : `Tidak ada user yang memakai kode ${code}.`;
+        await ctx.reply(msg);
+        return;
+      }
+
+      const lines = [];
+      if (lang === "en") {
+        lines.push(`Users who used discount code ${code}:`);
+      } else {
+        lines.push(`Pengguna yang memakai kode diskon ${code}:`);
+      }
+
+      for (const row of data) {
+        lines.push(`- ${row.user_id}`);
+      }
+
+      await ctx.reply(lines.join("\n"));
+    } catch (err) {
+      const msg =
+        lang === "en"
+          ? "Cannot load discount users right now."
+          : "Daftar pengguna kode diskon tidak dapat dimuat saat ini.";
+      await ctx.reply(msg);
+    }
+  });
   });
 
   // Callback pembayaran manual/Trakteer
@@ -2353,18 +2502,243 @@ async function main() {
 
     const msgAdmin =
       lang === "en"
-        ? `✅ Premium for user ${userId} extended by ${days} day(s).`
-        : `✅ Premium untuk user ${userId} ditambah ${days} hari.`;
+        ? `Premium for user ${userId} extended by ${days} day(s).`
+        : `Premium untuk user ${userId} ditambah ${days} hari.`;
     await ctx.reply(msgAdmin);
 
     try {
       const userLang = await getUserLang(userId);
       const msgUser =
         userLang === "en"
-          ? `🎉 Your premium has been extended by ${days} day(s) by admin.`
-          : `🎉 Premium kamu ditambah ${days} hari oleh admin.`;
+          ? `Premium has been extended by ${days} day(s) by admin.`
+          : `Premium kamu ditambah ${days} hari oleh admin.`;
       await bot.api.sendMessage(userId, msgUser);
     } catch (_) {}
+  });
+
+  // Admin: global stats
+  bot.command("adminstats", async (ctx) => {
+    const adminId = ctx.from.id;
+    if (!isAdmin(adminId)) return;
+    const lang = await getUserLang(adminId);
+
+    try {
+      // total users from user_stats
+      const { data: statsRows, error: statsErr } = await supabase
+        .from("user_stats")
+        .select("user_id");
+      const totalUsers =
+        !statsErr && Array.isArray(statsRows) ? statsRows.length : 0;
+
+      // active sessions = count pairs
+      const { count: activeSessions, error: pairsErr } = await supabase
+        .from("pairs")
+        .select("user_id", { count: "exact", head: true });
+
+      // queue waiting
+      const { count: queueCount, error: queueErr } = await supabase
+        .from("queue_free")
+        .select("user_id", { count: "exact", head: true });
+
+      // premium users
+      const nowIso = new Date().toISOString();
+      const { count: premiumCount, error: premErr } = await supabase
+        .from("premium")
+        .select("user_id", { count: "exact", head: true })
+        .gt("expires_at", nowIso);
+
+      // banned users
+      const { count: bannedCount, error: banErr } = await supabase
+        .from("banned_users")
+        .select("user_id", { count: "exact", head: true });
+
+      if (statsErr || pairsErr || queueErr || premErr || banErr) {
+        throw new Error("database error");
+      }
+
+      if (lang === "en") {
+        const lines = [
+          "System summary:",
+          "",
+          `• Total users: ${totalUsers}`,
+          `• Active sessions: ${activeSessions || 0}`,
+          `• Waiting in queue: ${queueCount || 0}`,
+          `• Premium users: ${premiumCount || 0}`,
+          `• Banned users: ${bannedCount || 0}`,
+        ];
+        await ctx.reply(lines.join("\n"));
+      } else {
+        const lines = [
+          "Ringkasan sistem:",
+          "",
+          `• Total pengguna: ${totalUsers}`,
+          `• Sesi aktif: ${activeSessions || 0}`,
+          `• Menunggu di antrian: ${queueCount || 0}`,
+          `• Pengguna premium: ${premiumCount || 0}`,
+          `• Pengguna diblokir: ${bannedCount || 0}`,
+        ];
+        await ctx.reply(lines.join("\n"));
+      }
+    } catch (err) {
+      const msg =
+        lang === "en"
+          ? "Cannot load system stats right now."
+          : "Statistik sistem tidak dapat dimuat saat ini.";
+      await ctx.reply(msg);
+    }
+  });
+
+  // Admin: list banned users (simple)
+  bot.command("list_banned", async (ctx) => {
+    const adminId = ctx.from.id;
+    if (!isAdmin(adminId)) return;
+    const lang = await getUserLang(adminId);
+
+    try {
+      const { data, error } = await supabase
+        .from("banned_users")
+        .select("user_id")
+        .limit(100);
+
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        const msg =
+          lang === "en"
+            ? "There are no banned users."
+            : "Tidak ada pengguna yang diblokir.";
+        await ctx.reply(msg);
+        return;
+      }
+
+      const ids = data.map((row) => String(row.user_id));
+      const header =
+        lang === "en" ? "List of banned users:" : "Daftar pengguna yang diblokir:";
+      const body = ids.join("\n");
+      await ctx.reply(`${header}\n${body}`);
+    } catch (err) {
+      const msg =
+        lang === "en"
+          ? "Cannot load banned users right now."
+          : "Daftar banned tidak dapat dimuat saat ini.";
+      await ctx.reply(msg);
+    }
+  });
+
+  // Admin: broadcast to active users
+  bot.command("broadcast", async (ctx) => {
+    const adminId = ctx.from.id;
+    if (!isAdmin(adminId)) return;
+    const lang = await getUserLang(adminId);
+    const text = (ctx.match || "").trim();
+
+    if (!text) {
+      const msg =
+        lang === "en"
+          ? "Usage: /broadcast <message>"
+          : "Cara pakai: /broadcast <pesan>";
+      await ctx.reply(msg);
+      return;
+    }
+
+    const userIds = await getAllUserIdsForBroadcast();
+    let sent = 0;
+    for (const uid of userIds) {
+      try {
+        await bot.api.sendMessage(uid, text);
+        sent += 1;
+      } catch (_) {
+        // abaikan error kirim ke user tertentu
+      }
+    }
+
+    const msg =
+      lang === "en"
+        ? `Broadcast sent to ${sent} users.`
+        : `Broadcast dikirim ke ${sent} pengguna.`;
+    await ctx.reply(msg);
+  });
+
+  // Admin: gift premium to random active free users
+  bot.command("giftpremium", async (ctx) => {
+    const adminId = ctx.from.id;
+    if (!isAdmin(adminId)) return;
+    const lang = await getUserLang(adminId);
+    const args = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+
+    if (args.length < 2) {
+      const msg =
+        lang === "en"
+          ? "Usage: /giftpremium <count> <days>"
+          : "Cara pakai: /giftpremium <jumlah> <hari>";
+      await ctx.reply(msg);
+      return;
+    }
+
+    const count = Number(args[0]);
+    const days = Number(args[1]);
+    if (
+      !count ||
+      Number.isNaN(count) ||
+      count <= 0 ||
+      !days ||
+      Number.isNaN(days) ||
+      days <= 0
+    ) {
+      const msg =
+        lang === "en"
+          ? "Count and days must be numbers > 0."
+          : "Jumlah dan hari harus berupa angka > 0.";
+      await ctx.reply(msg);
+      return;
+    }
+
+    const userIds = await getAllUserIdsForBroadcast();
+    const candidates = [];
+    for (const uid of userIds) {
+      const prem = await isPremium(uid);
+      if (!prem) {
+        candidates.push(uid);
+      }
+    }
+
+    if (candidates.length === 0) {
+      const msg =
+        lang === "en"
+          ? "No eligible free users to gift."
+          : "Tidak ada pengguna gratis yang bisa diberi premium.";
+      await ctx.reply(msg);
+      return;
+    }
+
+    // acak daftar kandidat
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+    }
+
+    const selected = candidates.slice(0, count);
+    let gifted = 0;
+    for (const uid of selected) {
+      try {
+        await extendPremium(uid, days);
+        gifted += 1;
+        try {
+          const uLang = await getUserLang(uid);
+          const msgUser =
+            uLang === "en"
+              ? `You have received ${days} day(s) of premium.`
+              : `Kamu mendapat premium ${days} hari.`;
+          await bot.api.sendMessage(uid, msgUser);
+        } catch (_) {}
+      } catch (_) {}
+    }
+
+    const msg =
+      lang === "en"
+        ? `Premium gifted to ${gifted} users for ${days} day(s).`
+        : `Premium diberikan ke ${gifted} pengguna selama ${days} hari.`;
+    await ctx.reply(msg);
   });
 
   // Admin: cek status user
