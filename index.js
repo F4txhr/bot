@@ -1629,11 +1629,27 @@ async function main() {
               src.length > 80 ? src.slice(0, 77) + "..." : src;
           }
         }
+
+        // format: ID di baris pertama, konten/snippet di baris bawahnya
+        lines.push(
+          lang === "en"
+            ? `id ${bm.id} [${created}]`
+            : `id ${bm.id} [${created}]`
+        );
         if (snippet) {
-          lines.push(`- [${created}] ${snippet}`);
+          lines.push(snippet);
         } else {
-          lines.push(`- [${created}] (no text snippet)`);
+          lines.push(
+            lang === "en" ? "(no text snippet)" : "(tidak ada cuplikan teks)"
+          );
         }
+        lines.push("");
+      }
+
+      if (lang === "en") {
+        lines.push("Unban with /unbanmedia <id>.");
+      } else {
+        lines.push("Unban dengan /unbanmedia <id>.");
       }
 
       await ctx.answerCallbackQuery({
@@ -2925,6 +2941,72 @@ async function main() {
         ? `Premium gifted to ${gifted} users for ${days} day(s).`
         : `Premium diberikan ke ${gifted} pengguna selama ${days} hari.`;
     await ctx.reply(msg);
+  });
+
+  // Admin: unban media by id
+  bot.command("unbanmedia", async (ctx) => {
+    const adminId = ctx.from.id;
+    if (!isAdmin(adminId)) return;
+    const lang = await getUserLang(adminId);
+    const args = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+
+    if (args.length < 1) {
+      const msg =
+        lang === "en"
+          ? "Usage: /unbanmedia <id>"
+          : "Cara pakai: /unbanmedia <id>";
+      await ctx.reply(msg);
+      return;
+    }
+
+    const id = Number(args[0]);
+    if (!id || Number.isNaN(id) || id <= 0) {
+      const msg =
+        lang === "en"
+          ? "ID must be a valid number."
+          : "ID harus berupa angka yang valid.";
+      await ctx.reply(msg);
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from("banned_media")
+        .select("id,media_type,created_at")
+        .eq("id", id)
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (!data) {
+        const msg =
+          lang === "en"
+            ? `No banned media found with id ${id}.`
+            : `Tidak ada media yang diblokir dengan id ${id}.`;
+        await ctx.reply(msg);
+        return;
+      }
+
+      const del = await supabase
+        .from("banned_media")
+        .delete()
+        .eq("id", id);
+
+      if (del.error) throw del.error;
+
+      const msg =
+        lang === "en"
+          ? `Media with id ${id} has been unbanned.`
+          : `Media dengan id ${id} telah dibuka blokirnya.`;
+      await ctx.reply(msg);
+    } catch (err) {
+      const msg =
+        lang === "en"
+          ? "Cannot unban media right now."
+          : "Media tidak dapat di-unban saat ini.";
+      await ctx.reply(msg);
+    }
   });
 
   // Admin: cek status user
