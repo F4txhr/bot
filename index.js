@@ -1506,6 +1506,153 @@ async function main() {
     }
   });
 
+  // Inline: show banned details per category
+  bot.callbackQuery(/^banlist:(user|text|photo|sticker|video)$/, async (ctx) => {
+    const adminId = ctx.from.id;
+    if (!isAdmin(adminId)) {
+      await ctx.answerCallbackQuery({
+        text: "Khusus admin.",
+        show_alert: true,
+      });
+      return;
+    }
+    const lang = await getUserLang(adminId);
+    const kind = ctx.match[1];
+
+    try {
+      if (kind === "user") {
+        const { data, error } = await supabase
+          .from("banned_users")
+          .select("user_id,reason,created_at")
+          .order("created_at", { ascending: false })
+          .limit(50);
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
+          const msg =
+            lang === "en"
+              ? "There are no banned users."
+              : "Tidak ada pengguna yang diblokir.";
+          await ctx.answerCallbackQuery({ text: msg, show_alert: false });
+          return;
+        }
+
+        const lines = [];
+        if (lang === "en") {
+          lines.push("Banned users (latest up to 50):");
+        } else {
+          lines.push("User diblokir (maksimal 50 terbaru):");
+        }
+        for (const row of data) {
+          const reason = row.reason || "";
+          if (lang === "en") {
+            lines.push(
+              `- ${row.user_id}${reason ? ` (${reason})` : ""}`
+            );
+          } else {
+            lines.push(
+              `- ${row.user_id}${reason ? ` (${reason})` : ""}`
+            );
+          }
+        }
+        await ctx.answerCallbackQuery({ text: "Daftar user diblokir.", show_alert: false });
+        await ctx.reply(lines.join("\n"));
+        return;
+      }
+
+      // media categories
+      const { data, error } = await supabase
+        .from("banned_media")
+        .select("id,report_id,media_type,created_at")
+        .eq("media_type", kind === "photo" ? "photo" : kind)
+        .order("created_at", { ascending: false })
+        .limit(20);
+
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        const msg =
+          lang === "en"
+            ? "No banned content in this category."
+            : "Belum ada konten yang diblokir di kategori ini.";
+        await ctx.answerCallbackQuery({ text: msg, show_alert: false });
+        return;
+      }
+
+      const ids = data.map((row) => row.report_id).filter(Boolean);
+      let reports = [];
+      if (ids.length > 0) {
+        const { data: repData, error: repErr } = await supabase
+          .from("reported_messages")
+          .select("id,message_type,text,ocr_text,created_at")
+          .in("id", ids);
+        if (!repErr && Array.isArray(repData)) {
+          reports = repData;
+        }
+      }
+
+      const lines = [];
+      const titleByKind =
+        kind === "text"
+          ? lang === "en"
+            ? "Banned text:"
+            : "Teks yang diblokir:"
+          : kind === "photo"
+          ? lang === "en"
+            ? "Banned images:"
+            : "Gambar yang diblokir:"
+          : kind === "sticker"
+          ? lang === "en"
+            ? "Banned stickers:"
+            : "Stiker yang diblokir:"
+          : lang === "en"
+          ? "Banned videos:"
+          : "Video yang diblokir:";
+
+      lines.push(titleByKind);
+
+      for (const bm of data) {
+        const rep = reports.find((r) => r.id === bm.report_id);
+        const created = bm.created_at
+          ? new Date(bm.created_at).toLocaleString(
+              lang === "en" ? "en-US" : "id-ID"
+            )
+          : "";
+        let snippet = "";
+        if (rep) {
+          const src =
+            rep.text ||
+            rep.ocr_text ||
+            "";
+          if (src) {
+            snippet =
+              src.length > 80 ? src.slice(0, 77) + "..." : src;
+          }
+        }
+        if (snippet) {
+          lines.push(`- [${created}] ${snippet}`);
+        } else {
+          lines.push(`- [${created}] (no text snippet)`);
+        }
+      }
+
+      await ctx.answerCallbackQuery({
+        text:
+          lang === "en"
+            ? "Banned content list sent."
+            : "Daftar konten yang diblokir dikirim.",
+        show_alert: false,
+      });
+      await ctx.reply(lines.join("\n"));
+    } catch (err) {
+      const msg =
+        lang === "en"
+          ? "Cannot load banned details right now."
+          : "Detail banned tidak dapat dimuat saat ini.";
+      await ctx.answerCallbackQuery({ text: msg, show_alert: true });
+    }
+  });
+
   // Callback pembayaran manual/Trakteer
   bot.callbackQuery(/^pay_manual:(.+)$/, async (ctx) => {
     const userId = ctx.from.id;
@@ -1923,7 +2070,7 @@ async function main() {
     // Ambil detail report dari Supabase
     const { data, error } = await supabase
       .from("reported_messages")
-      .select("partner_id, media_unique_id, ocr_hash, text_hash")
+      .select("partner_id, media_unique_id, ocr_hash, text_hash, message_type")
       .eq("id", reportId)
       .limit(1)
       .maybeSingle();
@@ -1941,6 +2088,8 @@ async function main() {
 
     const reportedUserId = data.partner_id || 0;
     await banMedia({
+      reportId,
+      mediaType: data.message_type || "",
       mediaUniqueId: data.media_unique_id || "",
       ocrHash: data.ocr_hash || "",
       textHash: data.text_hash || "",
@@ -2587,39 +2736,77 @@ async function main() {
     }
   });
 
-  // Admin: list banned users (simple)
+  // Admin: list banned summary + inline filter
   bot.command("list_banned", async (ctx) => {
     const adminId = ctx.from.id;
     if (!isAdmin(adminId)) return;
     const lang = await getUserLang(adminId);
 
     try {
-      const { data, error } = await supabase
+      const { count: userCount, error: userErr } = await supabase
         .from("banned_users")
-        .select("user_id")
-        .limit(100);
+        .select("user_id", { count: "exact", head: true });
 
-      if (error) throw error;
+      const { count: textCount, error: textErr } = await supabase
+        .from("banned_media")
+        .select("id", { count: "exact", head: true })
+        .eq("media_type", "text");
 
-      if (!data || data.length === 0) {
-        const msg =
-          lang === "en"
-            ? "There are no banned users."
-            : "Tidak ada pengguna yang diblokir.";
-        await ctx.reply(msg);
-        return;
+      const { count: photoCount, error: photoErr } = await supabase
+        .from("banned_media")
+        .select("id", { count: "exact", head: true })
+        .eq("media_type", "photo");
+
+      const { count: stickerCount, error: stickerErr } = await supabase
+        .from("banned_media")
+        .select("id", { count: "exact", head: true })
+        .eq("media_type", "sticker");
+
+      const { count: videoCount, error: videoErr } = await supabase
+        .from("banned_media")
+        .select("id", { count: "exact", head: true })
+        .eq("media_type", "video");
+
+      if (userErr || textErr || photoErr || stickerErr || videoErr) {
+        throw new Error("database error");
       }
 
-      const ids = data.map((row) => String(row.user_id));
-      const header =
-        lang === "en" ? "List of banned users:" : "Daftar pengguna yang diblokir:";
-      const body = ids.join("\n");
-      await ctx.reply(`${header}\n${body}`);
+      const lines =
+        lang === "en"
+          ? [
+              "Banned summary:",
+              "",
+              `• Users banned: ${userCount || 0}`,
+              `• Text banned: ${textCount || 0}`,
+              `• Images banned: ${photoCount || 0}`,
+              `• Stickers banned: ${stickerCount || 0}`,
+              `• Videos banned: ${videoCount || 0}`,
+            ]
+          : [
+              "Ringkasan banned:",
+              "",
+              `• User diblokir: ${userCount || 0}`,
+              `• Teks diblokir: ${textCount || 0}`,
+              `• Gambar diblokir: ${photoCount || 0}`,
+              `• Stiker diblokir: ${stickerCount || 0}`,
+              `• Video diblokir: ${videoCount || 0}`,
+            ];
+
+      const kb = new InlineKeyboard()
+        .text("User", "banlist:user")
+        .row()
+        .text("Text", "banlist:text")
+        .text("Image", "banlist:photo")
+        .row()
+        .text("Sticker", "banlist:sticker")
+        .text("Video", "banlist:video");
+
+      await ctx.reply(lines.join("\n"), { reply_markup: kb });
     } catch (err) {
       const msg =
         lang === "en"
-          ? "Cannot load banned users right now."
-          : "Daftar banned tidak dapat dimuat saat ini.";
+          ? "Cannot load banned summary right now."
+          : "Ringkasan banned tidak dapat dimuat saat ini.";
       await ctx.reply(msg);
     }
   });
