@@ -1592,154 +1592,154 @@ async function main() {
         let reports = [];
         if (ids.length > 0) {
           const { data: repData, error: repErr } = await supabase
-          .from("reported_messages")
-          .select("id,message_type,text,ocr_text,media_file_id,created_at")
-          .in("id", ids);
-        if (!repErr && Array.isArray(repData)) {
-          reports = repData;
-        }
-      }
-
-      const titleByKind =
-        kind === "text"
-          ? lang === "en"
-            ? "Banned text:"
-            : "Teks yang diblokir:"
-          : kind === "photo"
-          ? lang === "en"
-            ? "Banned images:"
-            : "Gambar yang diblokir:"
-          : kind === "sticker"
-          ? lang === "en"
-            ? "Banned stickers:"
-            : "Stiker yang diblokir:"
-          : lang === "en"
-          ? "Banned videos:"
-          : "Video yang diblokir:";
-
-      // header + paging info
-      const headerLines = [
-        titleByKind,
-        lang === "en"
-          ? `Page ${page}/${totalPages}`
-          : `Halaman ${page}/${totalPages}`,
-        "",
-        lang === "en"
-          ? "Unban with /unbanmedia <id>."
-          : "Unban dengan /unbanmedia <id>.",
-      ];
-
-      const kb = new InlineKeyboard();
-      if (page > 1) {
-        kb.text(
-          lang === "en" ? "Prev" : "Sebelumnya",
-          `banlist:${kind}:${page - 1}`
-        );
-      }
-      if (page < totalPages) {
-        if (page > 1) kb.text(" ", "noop");
-        kb.text(
-          lang === "en" ? "Next" : "Berikutnya",
-          `banlist:${kind}:${page + 1}`
-        );
-      }
-
-      await ctx.answerCallbackQuery({
-        text:
-          lang === "en"
-            ? "Banned content list sent."
-            : "Daftar konten yang diblokir dikirim.",
-        show_alert: false,
-      });
-
-      // kirim header sekali
-      await ctx.reply(headerLines.join("\n"), {
-        reply_markup: kb.inline_keyboard.length ? kb : undefined,
-      });
-
-      // untuk setiap item: satu bubble teks + bubble media
-      for (const bm of data) {
-        const rep = reports.find((r) => r.id === bm.report_id);
-        const created = bm.created_at
-          ? new Date(bm.created_at).toLocaleString(
-              lang === "en" ? "en-US" : "id-ID"
-            )
-          : "";
-
-        const infoText =
-          lang === "en"
-            ? `id ${bm.id} [${created}]`
-            : `id ${bm.id} [${created}]`;
-
-        // kirim bubble teks info
-        await ctx.reply(infoText);
-
-        if (rep && rep.media_file_id) {
-          const captionParts = [];
-          if (rep.text) {
-            captionParts.push(
-              rep.text.length > 200 ? rep.text.slice(0, 197) + "..." : rep.text
-            );
-          } else if (rep.ocr_text) {
-            const trimmed =
-              rep.ocr_text.length > 200
-                ? rep.ocr_text.slice(0, 197) + "..."
-                : rep.ocr_text;
-            captionParts.push(trimmed);
+            .from("reported_messages")
+            .select("id,message_type,text,ocr_text,media_file_id,created_at")
+            .in("id", ids);
+          if (!repErr && Array.isArray(repData)) {
+            reports = repData;
           }
-          const caption = captionParts.join("\n");
+        }
 
-          try {
-            if (rep.message_type === "photo") {
-              await bot.api.sendPhoto(ctx.chat.id, rep.media_file_id, {
-                caption,
-              });
-            } else if (rep.message_type === "sticker") {
-              await bot.api.sendSticker(ctx.chat.id, rep.media_file_id);
-            } else if (rep.message_type === "video") {
-              await bot.api.sendVideo(ctx.chat.id, rep.media_file_id, {
-                caption,
-              });
-            } else if (rep.message_type === "document") {
-              await bot.api.sendDocument(ctx.chat.id, rep.media_file_id, {
-                caption,
-              });
-            } else if (rep.message_type === "voice") {
-              await bot.api.sendVoice(ctx.chat.id, rep.media_file_id, {
-                caption,
-              });
-            } else {
-              // fallback: kirim teks saja
+        const titleByKind =
+          kind === "text"
+            ? lang === "en"
+              ? "Banned text:"
+              : "Teks yang diblokir:"
+            : kind === "photo"
+            ? lang === "en"
+              ? "Banned images:"
+              : "Gambar yang diblokir:"
+            : kind === "sticker"
+            ? lang === "en"
+              ? "Banned stickers:"
+              : "Stiker yang diblokir:"
+            : lang === "en"
+            ? "Banned videos:"
+            : "Video yang diblokir:";
+
+        // header + paging info
+        const headerLines = [
+          titleByKind,
+          lang === "en"
+            ? `Page ${page}/${totalPages}`
+            : `Halaman ${page}/${totalPages}`,
+          "",
+          lang === "en"
+            ? "Unban with /unbanmedia <id>."
+            : "Unban dengan /unbanmedia <id>.",
+        ];
+
+        const kb = new InlineKeyboard();
+        if (page > 1) {
+          kb.text(
+            lang === "en" ? "Prev" : "Sebelumnya",
+            `banlist:${kind}:${page - 1}`
+          );
+        }
+        if (page < totalPages) {
+          if (page > 1) kb.text(" ", "noop");
+          kb.text(
+            lang === "en" ? "Next" : "Berikutnya",
+            `banlist:${kind}:${page + 1}`
+          );
+        }
+
+        await ctx.answerCallbackQuery({
+          text:
+            lang === "en"
+              ? "Banned content list sent."
+              : "Daftar konten yang diblokir dikirim.",
+          show_alert: false,
+        });
+
+        // kirim header sekali
+        await ctx.reply(headerLines.join("\n"), {
+          reply_markup: kb.inline_keyboard.length ? kb : undefined,
+        });
+
+        // untuk setiap item: satu bubble teks + bubble media
+        for (const bm of data) {
+          const rep = reports.find((r) => r.id === bm.report_id);
+          const created = bm.created_at
+            ? new Date(bm.created_at).toLocaleString(
+                lang === "en" ? "en-US" : "id-ID"
+              )
+            : "";
+
+          const infoText =
+            lang === "en"
+              ? `id ${bm.id} [${created}]`
+              : `id ${bm.id} [${created}]`;
+
+          // kirim bubble teks info
+          await ctx.reply(infoText);
+
+          if (rep && rep.media_file_id) {
+            const captionParts = [];
+            if (rep.text) {
+              captionParts.push(
+                rep.text.length > 200
+                  ? rep.text.slice(0, 197) + "..."
+                  : rep.text
+              );
+            } else if (rep.ocr_text) {
+              const trimmed =
+                rep.ocr_text.length > 200
+                  ? rep.ocr_text.slice(0, 197) + "..."
+                  : rep.ocr_text;
+              captionParts.push(trimmed);
+            }
+            const caption = captionParts.join("\n");
+
+            try {
+              if (rep.message_type === "photo") {
+                await bot.api.sendPhoto(ctx.chat.id, rep.media_file_id, {
+                  caption,
+                });
+              } else if (rep.message_type === "sticker") {
+                await bot.api.sendSticker(ctx.chat.id, rep.media_file_id);
+              } else if (rep.message_type === "video") {
+                await bot.api.sendVideo(ctx.chat.id, rep.media_file_id, {
+                  caption,
+                });
+              } else if (rep.message_type === "document") {
+                await bot.api.sendDocument(ctx.chat.id, rep.media_file_id, {
+                  caption,
+                });
+              } else if (rep.message_type === "voice") {
+                await bot.api.sendVoice(ctx.chat.id, rep.media_file_id, {
+                  caption,
+                });
+              } else {
+                // fallback: kirim teks saja
+                if (caption) {
+                  await ctx.reply(caption);
+                }
+              }
+            } catch (e) {
+              // jika gagal kirim media, kirim caption saja
               if (caption) {
                 await ctx.reply(caption);
               }
             }
-          } catch (e) {
-            // jika gagal kirim media, kirim caption saja
-            if (caption) {
-              await ctx.reply(caption);
-            }
-          }
-        } else {
-          // tidak ada media_file_id, kirim snippet teks/OCR
-          if (rep) {
-            const src = rep.text || rep.ocr_text || "";
-            if (src) {
-              const snippet =
-                src.length > 200 ? src.slice(0, 197) + "..." : src;
-              await ctx.reply(snippet);
+          } else {
+            // tidak ada media_file_id, kirim snippet teks/OCR
+            if (rep) {
+              const src = rep.text || rep.ocr_text || "";
+              if (src) {
+                const snippet =
+                  src.length > 200 ? src.slice(0, 197) + "..." : src;
+                await ctx.reply(snippet);
+              }
             }
           }
         }
-      }
-    } catch (err) {
-      const msg =
-        lang === "en"
-          ? "Cannot load banned details right now."
-          : "Detail banned tidak dapat dimuat saat ini.";
-      await ctx.answerCallbackQuery({ text: msg, show_alert: true });
-    }
-  });
+      } catch (err) {
+        const msg =
+          lang === "en"
+            ? "Cannot load banned details right now."
+            : "Detail banned tidak dapat dimuat saat ini.";
+        await ctx.answerCallbackQuery({ text: msg, show_alert: true });
       }
     }
   );
