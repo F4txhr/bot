@@ -1506,168 +1506,195 @@ async function main() {
     }
   });
 
-  // Inline: show banned details per category
-  bot.callbackQuery(/^banlist:(user|text|photo|sticker|video)$/, async (ctx) => {
-    const adminId = ctx.from.id;
-    if (!isAdmin(adminId)) {
-      await ctx.answerCallbackQuery({
-        text: "Khusus admin.",
-        show_alert: true,
-      });
-      return;
-    }
-    const lang = await getUserLang(adminId);
-    const kind = ctx.match[1];
+  // Inline: show banned details per category (with simple paging)
+  bot.callbackQuery(
+    /^banlist:(user|text|photo|sticker|video)(?::(\d+))?$/,
+    async (ctx) => {
+      const adminId = ctx.from.id;
+      if (!isAdmin(adminId)) {
+        await ctx.answerCallbackQuery({
+          text: "Khusus admin.",
+          show_alert: true,
+        });
+        return;
+      }
+      const lang = await getUserLang(adminId);
+      const kind = ctx.match[1];
+      const page = ctx.match[2] ? Number(ctx.match[2]) || 1 : 1;
+      const PAGE_SIZE = 10;
 
-    try {
-      if (kind === "user") {
-        const { data, error } = await supabase
-          .from("banned_users")
-          .select("user_id,reason,created_at")
-          .order("created_at", { ascending: false })
-          .limit(50);
+      try {
+        if (kind === "user") {
+          const { data, error } = await supabase
+            .from("banned_users")
+            .select("user_id,reason,created_at")
+            .order("created_at", { ascending: false })
+            .limit(50);
+          if (error) throw error;
+
+          if (!data || data.length === 0) {
+            const msg =
+              lang === "en"
+                ? "There are no banned users."
+                : "Tidak ada pengguna yang diblokir.";
+            await ctx.answerCallbackQuery({ text: msg, show_alert: false });
+            return;
+          }
+
+          const lines = [];
+          if (lang === "en") {
+            lines.push("Banned users (latest up to 50):");
+          } else {
+            lines.push("User diblokir (maksimal 50 terbaru):");
+          }
+          for (const row of data) {
+            const reason = row.reason || "";
+            lines.push(
+              `- ${row.user_id}${reason ? ` (${reason})` : ""}`
+            );
+          }
+          await ctx.answerCallbackQuery({
+            text: "Daftar user diblokir.",
+            show_alert: false,
+          });
+          await ctx.reply(lines.join("\n"));
+          return;
+        }
+
+        // media categories with paging
+        const offset = (page - 1) * PAGE_SIZE;
+        const baseQuery = supabase
+          .from("banned_media")
+          .select("id,report_id,media_type,created_at", {
+            count: "exact",
+          })
+          .eq("media_type", kind === "photo" ? "photo" : kind)
+          .order("created_at", { ascending: false });
+
+        const { data, count, error } = await baseQuery
+          .range(offset, offset + PAGE_SIZE - 1);
+
         if (error) throw error;
 
         if (!data || data.length === 0) {
           const msg =
             lang === "en"
-              ? "There are no banned users."
-              : "Tidak ada pengguna yang diblokir.";
+              ? "No banned content in this category."
+              : "Belum ada konten yang diblokir di kategori ini.";
           await ctx.answerCallbackQuery({ text: msg, show_alert: false });
           return;
         }
 
+        const total = typeof count === "number" ? count : data.length;
+        const totalPages = Math.max(Math.ceil(total / PAGE_SIZE), 1);
+
+        const ids = data.map((row) => row.report_id).filter(Boolean);
+        let reports = [];
+        if (ids.length > 0) {
+          const { data: repData, error: repErr } = await supabase
+            .from("reported_messages")
+            .select("id,message_type,text,ocr_text,created_at")
+            .in("id", ids);
+          if (!repErr && Array.isArray(repData)) {
+            reports = repData;
+          }
+        }
+
         const lines = [];
-        if (lang === "en") {
-          lines.push("Banned users (latest up to 50):");
-        } else {
-          lines.push("User diblokir (maksimal 50 terbaru):");
-        }
-        for (const row of data) {
-          const reason = row.reason || "";
-          if (lang === "en") {
-            lines.push(
-              `- ${row.user_id}${reason ? ` (${reason})` : ""}`
-            );
-          } else {
-            lines.push(
-              `- ${row.user_id}${reason ? ` (${reason})` : ""}`
-            );
-          }
-        }
-        await ctx.answerCallbackQuery({ text: "Daftar user diblokir.", show_alert: false });
-        await ctx.reply(lines.join("\n"));
-        return;
-      }
+        const titleByKind =
+          kind === "text"
+            ? lang === "en"
+              ? "Banned text:"
+              : "Teks yang diblokir:"
+            : kind === "photo"
+            ? lang === "en"
+              ? "Banned images:"
+              : "Gambar yang diblokir:"
+            : kind === "sticker"
+            ? lang === "en"
+              ? "Banned stickers:"
+              : "Stiker yang diblokir:"
+            : lang === "en"
+            ? "Banned videos:"
+            : "Video yang diblokir:";
 
-      // media categories
-      const { data, error } = await supabase
-        .from("banned_media")
-        .select("id,report_id,media_type,created_at")
-        .eq("media_type", kind === "photo" ? "photo" : kind)
-        .order("created_at", { ascending: false })
-        .limit(20);
-
-      if (error) throw error;
-
-      if (!data || data.length === 0) {
-        const msg =
-          lang === "en"
-            ? "No banned content in this category."
-            : "Belum ada konten yang diblokir di kategori ini.";
-        await ctx.answerCallbackQuery({ text: msg, show_alert: false });
-        return;
-      }
-
-      const ids = data.map((row) => row.report_id).filter(Boolean);
-      let reports = [];
-      if (ids.length > 0) {
-        const { data: repData, error: repErr } = await supabase
-          .from("reported_messages")
-          .select("id,message_type,text,ocr_text,created_at")
-          .in("id", ids);
-        if (!repErr && Array.isArray(repData)) {
-          reports = repData;
-        }
-      }
-
-      const lines = [];
-      const titleByKind =
-        kind === "text"
-          ? lang === "en"
-            ? "Banned text:"
-            : "Teks yang diblokir:"
-          : kind === "photo"
-          ? lang === "en"
-            ? "Banned images:"
-            : "Gambar yang diblokir:"
-          : kind === "sticker"
-          ? lang === "en"
-            ? "Banned stickers:"
-            : "Stiker yang diblokir:"
-          : lang === "en"
-          ? "Banned videos:"
-          : "Video yang diblokir:";
-
-      lines.push(titleByKind);
-
-      for (const bm of data) {
-        const rep = reports.find((r) => r.id === bm.report_id);
-        const created = bm.created_at
-          ? new Date(bm.created_at).toLocaleString(
-              lang === "en" ? "en-US" : "id-ID"
-            )
-          : "";
-        let snippet = "";
-        if (rep) {
-          const src =
-            rep.text ||
-            rep.ocr_text ||
-            "";
-          if (src) {
-            snippet =
-              src.length > 80 ? src.slice(0, 77) + "..." : src;
-          }
-        }
-
-        // format: ID di baris pertama, konten/snippet di baris bawahnya
+        lines.push(titleByKind);
         lines.push(
           lang === "en"
-            ? `id ${bm.id} [${created}]`
-            : `id ${bm.id} [${created}]`
+            ? `Page ${page}/${totalPages}`
+            : `Halaman ${page}/${totalPages}`
         );
-        if (snippet) {
-          lines.push(snippet);
+        lines.push("");
+
+        for (const bm of data) {
+          const rep = reports.find((r) => r.id === bm.report_id);
+          const created = bm.created_at
+            ? new Date(bm.created_at).toLocaleString(
+                lang === "en" ? "en-US" : "id-ID"
+              )
+            : "";
+          let snippet = "";
+          if (rep) {
+            const src = rep.text || rep.ocr_text || "";
+            if (src) {
+              snippet = src.length > 120 ? src.slice(0, 117) + "..." : src;
+            }
+          }
+
+          // satu bubble: baris id + tanggal, lalu baris konten/snippet
+          lines.push(`id ${bm.id} [${created}]`);
+          if (snippet) {
+            lines.push(snippet);
+          } else {
+            lines.push(
+              lang === "en"
+                ? "(no text snippet)"
+                : "(tidak ada cuplikan teks)"
+            );
+          }
+          lines.push("");
+        }
+
+        if (lang === "en") {
+          lines.push("Unban with /unbanmedia <id>.");
         } else {
-          lines.push(
-            lang === "en" ? "(no text snippet)" : "(tidak ada cuplikan teks)"
+          lines.push("Unban dengan /unbanmedia <id>.");
+        }
+
+        const kb = new InlineKeyboard();
+        if (page > 1) {
+          kb.text(
+            lang === "en" ? "Prev" : "Sebelumnya",
+            `banlist:${kind}:${page - 1}`
           );
         }
-        lines.push("");
-      }
+        if (page < totalPages) {
+          if (page > 1) kb.text(" ", "noop");
+          kb.text(
+            lang === "en" ? "Next" : "Berikutnya",
+            `banlist:${kind}:${page + 1}`
+          );
+        }
 
-      if (lang === "en") {
-        lines.push("Unban with /unbanmedia <id>.");
-      } else {
-        lines.push("Unban dengan /unbanmedia <id>.");
-      }
-
-      await ctx.answerCallbackQuery({
-        text:
+        await ctx.answerCallbackQuery({
+          text:
+            lang === "en"
+              ? "Banned content list sent."
+              : "Daftar konten yang diblokir dikirim.",
+          show_alert: false,
+        });
+        await ctx.reply(lines.join("\n"), {
+          reply_markup: kb.inline_keyboard.length ? kb : undefined,
+        });
+      } catch (err) {
+        const msg =
           lang === "en"
-            ? "Banned content list sent."
-            : "Daftar konten yang diblokir dikirim.",
-        show_alert: false,
-      });
-      await ctx.reply(lines.join("\n"));
-    } catch (err) {
-      const msg =
-        lang === "en"
-          ? "Cannot load banned details right now."
-          : "Detail banned tidak dapat dimuat saat ini.";
-      await ctx.answerCallbackQuery({ text: msg, show_alert: true });
+            ? "Cannot load banned details right now."
+            : "Detail banned tidak dapat dimuat saat ini.";
+        await ctx.answerCallbackQuery({ text: msg, show_alert: true });
+      }
     }
-  });
+  );
 
   // Callback pembayaran manual/Trakteer
   bot.callbackQuery(/^pay_manual:(.+)$/, async (ctx) => {
@@ -2811,11 +2838,11 @@ async function main() {
       const kb = new InlineKeyboard()
         .text("User", "banlist:user")
         .row()
-        .text("Text", "banlist:text")
-        .text("Image", "banlist:photo")
+        .text("Text", "banlist:text:1")
+        .text("Image", "banlist:photo:1")
         .row()
-        .text("Sticker", "banlist:sticker")
-        .text("Video", "banlist:video");
+        .text("Sticker", "banlist:sticker:1")
+        .text("Video", "banlist:video:1");
 
       await ctx.reply(lines.join("\n"), { reply_markup: kb });
     } catch (err) {
