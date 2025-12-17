@@ -1629,20 +1629,15 @@ async function main() {
             : "Unban dengan /unbanmedia <id>.",
         ];
 
-        const kb = new InlineKeyboard();
-        if (page > 1) {
-          kb.text(
+        const kb = new InlineKeyboard()
+          .text(
             lang === "en" ? "Prev" : "Sebelumnya",
             `banlist:${kind}:${page - 1}`
-          );
-        }
-        if (page < totalPages) {
-          if (page > 1) kb.text(" ", "noop");
-          kb.text(
+          )
+          .text(
             lang === "en" ? "Next" : "Berikutnya",
             `banlist:${kind}:${page + 1}`
           );
-        }
 
         await ctx.answerCallbackQuery({
           text:
