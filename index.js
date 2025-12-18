@@ -1520,7 +1520,7 @@ async function main() {
       }
       const lang = await getUserLang(adminId);
       const kind = ctx.match[1];
-      const page = ctx.match[2] ? Number(ctx.match[2]) || 1 : 1;
+      const rawPage = ctx.match[2] ? Number(ctx.match[2]) || 1 : 1;
       const PAGE_SIZE = 10;
 
       try {
@@ -1562,7 +1562,6 @@ async function main() {
         }
 
         // media categories with paging
-        const offset = (page - 1) * PAGE_SIZE;
         const baseQuery = supabase
           .from("banned_media")
           .select("id,report_id,media_type,created_at", {
@@ -1571,12 +1570,13 @@ async function main() {
           .eq("media_type", kind === "photo" ? "photo" : kind)
           .order("created_at", { ascending: false });
 
-        const { data, count, error } = await baseQuery
-          .range(offset, offset + PAGE_SIZE - 1);
+        // ambil total count dulu untuk hitung halaman
+        const { count: totalCount, error: countErr } = await baseQuery
+          .select("id", { count: "exact", head: true });
+        if (countErr) throw countErr;
 
-        if (error) throw error;
-
-        if (!data || data.length === 0) {
+        const total = typeof totalCount === "number" ? totalCount : 0;
+        if (!total) {
           const msg =
             lang === "en"
               ? "No banned content in this category."
@@ -1585,8 +1585,16 @@ async function main() {
           return;
         }
 
-        const total = typeof count === "number" ? count : data.length;
         const totalPages = Math.max(Math.ceil(total / PAGE_SIZE), 1);
+        let page = rawPage;
+        if (page < 1) page = 1;
+        if (page > totalPages) page = totalPages;
+
+        const offset = (page - 1) * PAGE_SIZE;
+        const { data, error } = await baseQuery
+          .range(offset, offset + PAGE_SIZE - 1);
+
+        if (error) throw error;
 
         const ids = data.map((row) => row.report_id).filter(Boolean);
         let reports = [];
@@ -1629,14 +1637,17 @@ async function main() {
             : "Unban dengan /unbanmedia <id>.",
         ];
 
+        const prevPage = page > 1 ? page - 1 : 1;
+        const nextPage = page < totalPages ? page + 1 : totalPages;
+
         const kb = new InlineKeyboard()
           .text(
             lang === "en" ? "Prev" : "Sebelumnya",
-            `banlist:${kind}:${page - 1}`
+            `banlist:${kind}:${prevPage}`
           )
           .text(
             lang === "en" ? "Next" : "Berikutnya",
-            `banlist:${kind}:${page + 1}`
+            `banlist:${kind}:${nextPage}`
           );
 
         await ctx.answerCallbackQuery({
