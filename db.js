@@ -603,14 +603,12 @@ async function getPendingPaymentCode(userId, methodFilter = null) {
 async function findUserByPaymentCode(code, method = null) {
   if (!code) return null;
 
-  let query = supabase
+  const { data, error } = await supabase
     .from("payment_codes")
     .select("user_id, used, method")
     .eq("code", code)
     .limit(1)
     .maybeSingle();
-
-  const { data, error } = await query;
 
   if (error && error.code !== "PGRST116") {
     console.error("Supabase findUserByPaymentCode error:", error.message);
@@ -631,26 +629,6 @@ async function markPaymentCodeUsed(code) {
   if (error) {
     console.error("Supabase markPaymentCodeUsed error:", error.message);
   }
-}
-
-// Cari user berdasarkan kode pembayaran yang belum digunakan
-async function findUserByPaymentCode(code) {
-  if (!code) return null;
-  const { data, error } = await supabase
-    .from("payment_codes")
-    .select("user_id, used, method")
-    .eq("code", code)
-    .limit(1)
-    .maybeSingle();
-
-  if (error && error.code !== "PGRST116") {
-    console.error("Supabase findUserByPaymentCode error:", error.message);
-    return null;
-  }
-  if (!data || data.used) {
-    return null;
-  }
-  return { userId: data.user_id, method: data.method || "any" };
 }
 
 async function markPaymentCodeUsed(code) {
