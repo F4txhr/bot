@@ -892,19 +892,6 @@ async function handlePremium(ctx) {
   }
 
   const keyboard = new InlineKeyboard();
-      premium && premiumExpire
-        ? `• Premium berlaku sampai: ${premiumExpire.toLocaleString("id-ID")}`
-        : "";
-
-    text = [
-      "💎 *Premium*",
-      "",
-      premium
-        ? "• Status: Kamu saat ini adalah pengguna premium."
-        : "• Status: Kamu saat ini belum premium.",
-      expireLineId,
-      "",
-      "• Setiap Rp 1.000 = 1 hari premium.",
      
 
   const keyboard = new InlineKeyboard();
