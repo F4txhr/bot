@@ -446,10 +446,10 @@ async function sendPostChatFeedbackPrompt(userId, partnerId) {
       : "Sesi chat selesai. Bagaimana pengalamanmu dengan partner ini?";
 
   const kb = new InlineKeyboard()
-    .text("Suka", `fb_like:${partnerId}`)
-    .text("Tidak suka", `fb_dislike:${partnerId}`)
+    .text("👍", `fb_like:${partnerId}`)
+    .text("👎", `fb_dislike:${partnerId}`)
     .row()
-    .text("Laporkan", `fb_report:${partnerId}`);
+    .text("🚩", `fb_report:${partnerId}`);
 
   try {
     await bot.api.sendMessage(userId, text, { reply_markup: kb });
