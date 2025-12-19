@@ -891,7 +891,7 @@ async function handlePremium(ctx) {
       .join("\n");
   }
 
-  const keyboard = new InlineKeyboard();d =
+  const keyboard = new InlineKeyboard();
       premium && premiumExpire
         ? `• Premium berlaku sampai: ${premiumExpire.toLocaleString("id-ID")}`
         : "";
