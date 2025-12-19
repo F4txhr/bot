@@ -880,6 +880,31 @@ async function handlePremium(ctx) {
       expireLineId,
       "",
       "• Setiap Rp 1.000 = 1 hari premium.",
+      "  Contoh:",
+      "  - Rp 3.000 → 3 hari",
+      "  - Rp 10.000 → 10 hari",
+      "",
+      ...reminder,
+      "Lalu pilih salah satu metode pembayaran di bawah:",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  const keyboard = new InlineKeyboard();d =
+      premium && premiumExpire
+        ? `• Premium berlaku sampai: ${premiumExpire.toLocaleString("id-ID")}`
+        : "";
+
+    text = [
+      "💎 *Premium*",
+      "",
+      premium
+        ? "• Status: Kamu saat ini adalah pengguna premium."
+        : "• Status: Kamu saat ini belum premium.",
+      expireLineId,
+      "",
+      "• Setiap Rp 1.000 = 1 hari premium.",
      
 
   const keyboard = new InlineKeyboard();
