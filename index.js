@@ -64,7 +64,9 @@ const {
   setMyGender,
   setTargetGender,
   clearTargetGender,
-} = require("./d_code.TRAKTEER_URL || "";
+} = require("./db");
+
+const TRAKTEER_URL = process.env.TRAKTEER_URL || "";
 const TRAKTEER_WEBHOOK_SECRET =
   process.env.TRAKTEER_WEBHOOK_SECRET || "";
 const E_WALLET_NUMBER = (process.env.E_WALLET_NUMBER || "089647770084").trim();
