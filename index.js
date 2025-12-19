@@ -2095,233 +2095,257 @@ async function main() {
     }
   });
 
-  // Inline partner gender preference selection
-  bot.callbackQuery(/^tg:(male|female|other|any)$/, async (ctx) => {
-    const userId = ctx.from.id;
-    const lang = await getUserLang(userId);
+  // Inline post-chat feedback: like / dislike / report
+  bot.callbackQuery(/^fb_like:(\d+)$/, async (ctx) => {
+    const fromId = ctx.from.id;
+    const partnerId = Number(ctx.match[1]);
+    console.log("fb_like callback", { fromId, partnerId, data: ctx.callbackQuery.data });
 
-    const isPrem = await isPremium(userId);
-    if (!isPrem) {
-      await clearTargetGender(userId);
-      await ctx.answerCallbackQuery({
-        text:
-          lang === "en"
-            ? "Only premium users can set partner gender preference."
-            : "Hanya pengguna premium yang bisa mengatur preferensi gender pasangan.",
-        show_alert: true,
-      });
+    if (!partnerId || partnerId === fromId) {
+      await ctx.answerCallbackQuery({ text: "Tidak valid.", show_alert: false });
       return;
     }
-
-    let target = ctx.match[1];
-
-    if (target === "any") {
-      await clearTargetGender(userId);
-      const msg =
-        lang === "en"
-          ? "✅ Your partner preference has been reset to *random (any)*."
-          : "✅ Preferensi pasanganmu direset ke *acak (any)*.";
-      try {
-        await ctx.editMessageText(msg, { parse_mode: "Markdown" });
-      } catch (_) {
-        await ctx.answerCallbackQuery({
-          text:
-            lang === "en"
-              ? "Preference reset to random."
-              : "Preferensi direset ke acak.",
-          show_alert: false,
-        });
-      }
-      return;
-    }
-
-    await setTargetGender(userId, target);
-
-    const msg =
-      lang === "en"
-        ? `✅ Your partner preference has been set to *${target}*.\nIt will stay active while you are premium.`
-        : `✅ Preferensi pasanganmu diset ke *${target}*.\nPreferensi ini akan aktif selama kamu masih premium.`;
 
     try {
-      await ctx.editMessageText(msg, { parse_mode: "Markdown" });
-    } catch (_) {
-      await ctx.answerCallbackQuery({
-        text:
-          lang === "en"
-            ? "Preference updated."
-            : "Preferensi diperbarui.",
-        show_alert: false,
+      await saveChatFeedback({
+        userId: fromId,
+        partnerId,
+        type: "like",
+        reason: null,
       });
+
+      await adjustUserTrust(partnerId, +1);
+    } catch (e) {
+      console.error("Gagal proses fb_like:", e.message);
     }
-  });
 
-  // Inline language selection
-  bot.callbackQuery(/^lang:(id|en)$/, async (ctx) => {
-    const userId = ctx.from.id;
-    const choice = ctx.match[1];
-    await setUserLang(userId, choice);
-
+    const lang = await getUserLang(fromId);
     const text =
-      choice === "en"
-        ? "✅ Language has been set to English."
-        : "✅ Bahasa telah diubah ke Bahasa Indonesia.";
+      lang === "en"
+        ? "Thank you for your feedback."
+        : "Terima kasih atas feedbackmu.";
 
     try {
       await ctx.editMessageText(text);
-    } catch (_) {
+    } catch (e) {
+      console.error("Gagal edit pesan fb_like:", e.message);
+      await ctx.answerCallbackQuery({ text, show_alert: false });
+    }
+  });
+
+  bot.callbackQuery(/^fb_dislike:(\d+)$/, async (ctx) => {
+    const fromId = ctx.from.id;
+    const partnerId = Number(ctx.match[1]);
+    console.log("fb_dislike callback", { fromId, partnerId, data: ctx.callbackQuery.data });
+
+    if (!partnerId || partnerId === fromId) {
+      await ctx.answerCallbackQuery({ text: "Tidak valid.", show_alert: false });
+      return;
+    }
+
+    try {
+      await saveChatFeedback({
+        userId: fromId,
+        partnerId,
+        type: "dislike",
+        reason: null,
+      });
+
+      await adjustUserTrust(partnerId, -1);
+    } catch (e) {
+      console.error("Gagal proses fb_dislike:", e.message);
+    }
+
+    const lang = await getUserLang(fromId);
+    const text =
+      lang === "en"
+        ? "Your feedback has been recorded."
+        : "Feedback kamu sudah dicatat.";
+
+    try {
+      await ctx.editMessageText(text);
+    } catch (e) {
+      console.error("Gagal edit pesan fb_dislike:", e.message);
+      await ctx.answerCallbackQuery({ text, show_alert: false });
+    }
+  });
+
+  bot.callbackQuery(/^fb_report:(\d+)$/, async (ctx) => {
+    const fromId = ctx.from.id;
+    const partnerId = Number(ctx.match[1]);
+    console.log("fb_report callback", { fromId, partnerId, data: ctx.callbackQuery.data });
+
+    if (!partnerId || partnerId === fromId) {
+      await ctx.answerCallbackQuery({ text: "Tidak valid.", show_alert: false });
+      return;
+    }
+
+    const lang = await getUserLang(fromId);
+    const text =
+      lang === "en"
+        ? "What is your reason for reporting your partner?"
+        : "Apa alasanmu melaporkan partner ini?";
+
+    const kb = new InlineKeyboard()
+      .text(
+        lang === "en" ? "Harsh language" : "Kasara / kata kasar",
+        `fb_reason:${partnerId}:abuse`
+      )
+      .row()
+      .text("Spam", `fb_reason:${partnerId}:spam`)
+      .row()
+      .text(
+        lang === "en" ? "Hate / harassment" : "SARA / pelecehan",
+        `fb_reason:${partnerId}:hate`
+      )
+      .row()
+      .text(
+        lang === "en" ? "Adult content" : "Konten dewasa",
+        `fb_reason:${partnerId}:nsfw`
+      )
+      .row()
+      .text(lang === "en" ? "Other" : "Lainnya", `fb_reason:${partnerId}:other`);
+
+    try {
+      await ctx.editMessageText(text, { reply_markup: kb });
+    } catch (e) {
+      console.error("Gagal edit pesan fb_report:", e.message);
       await ctx.answerCallbackQuery({
-        text,
-        show_alert: false,
+        text:
+          lang === "en"
+            ? "Choose a reason from the message."
+            : "Pilih alasan dari pesan.",
+        show_alert: true,
       });
     }
   });
 
-  // Admin actions from report log group/DM: ban media (bukan user)
-  bot.callbackQuery(/^admin_banmedia:(\d+)$/, async (ctx) => {
-    const adminId = ctx.from.id;
-    const lang = await getUserLang(adminId);
+  bot.callbackQuery(
+    /^fb_reason:(\d+):(abuse|spam|hate|nsfw|other)$/,
+    async (ctx) => {
+      const fromId = ctx.from.id;
+      const partnerId = Number(ctx.match[1]);
+      const reasonKey = ctx.match[2];
+      console.log("fb_reason callback", { fromId, partnerId, reasonKey, data: ctx.callbackQuery.data });
 
-    if (!isAdmin(adminId)) {
-      await ctx.answerCallbackQuery({
-        text: lang === "en" ? "Admin only." : "Khusus admin.",
-        show_alert: true,
-      });
-      return;
-    }
+      if (!partnerId || partnerId === fromId) {
+        await ctx.answerCallbackQuery({
+          text: "Tidak valid.",
+          show_alert: false,
+        });
+        return;
+      }
 
-    const reportId = Number(ctx.match[1]);
-    if (!reportId) {
-      await ctx.answerCallbackQuery({
-        text: lang === "en" ? "Invalid report id." : "ID laporan tidak valid.",
-        show_alert: false,
-      });
-      return;
-    }
+      try {
+        await saveChatFeedback({
+          userId: fromId,
+          partnerId,
+          type: "report",
+          reason: reasonKey,
+        });
 
-    // Ambil detail report dari Supabase
-    const { data, error } = await supabase
-      .from("reported_messages")
-      .select("partner_id, media_unique_id, ocr_hash, text_hash, message_type")
-      .eq("id", reportId)
-      .limit(1)
-      .maybeSingle();
+        // turunkan trust partner agak lebih besar
+        await adjustUserTrust(partnerId, -5);
+      } catch (e) {
+        console.error("Gagal proses save/adjust trust fb_reason:", e.message);
+      }
 
-    if (error || !data) {
-      await ctx.answerCallbackQuery({
-        text:
-          lang === "en"
-            ? "Failed to load report detail."
-            : "Gagal mengambil detail laporan.",
-        show_alert: false,
-      });
-      return;
-    }
+      // log report sederhana ke reported_messages
+      try {
+        const { data, error } = await supabase
+          .from("reported_messages")
+          .insert({
+            reporter_id: fromId,
+            partner_id: partnerId,
+            message_type: "post_chat",
+            text: null,
+            ocr_text: `POST_CHAT_REPORT:${reasonKey}`,
+            media_file_id: null,
+            media_unique_id: null,
+            ocr_hash: null,
+            text_hash: null,
+            created_at: new Date().toISOString(),
+          })
+          .select("id")
+          .maybeSingle();
 
-    const reportedUserId = data.partner_id || 0;
-    await banMedia({
-      reportId,
-      mediaType: data.message_type || "",
-      mediaUniqueId: data.media_unique_id || "",
-      ocrHash: data.ocr_hash || "",
-      textHash: data.text_hash || "",
-    });
-
-    // turunkan trust user terlapor jika diketahui
-    if (reportedUserId) {
-      const trust = await adjustUserTrust(reportedUserId, -10);
-
-      // jika laporan valid terkumpul >= 15 kali, auto-ban user
-      if (trust && trust.total_reports_valid >= 15) {
-        await banUser(
-          reportedUserId,
-          "Auto-ban: too many valid content reports"
-        );
-
-        // Beritahu user
-        try {
-          const uLang = await getUserLang(reportedUserId);
-          await bot.api.sendMessage(
-            reportedUserId,
-            uLang === "en"
-              ? "❌ Your account has been blocked automatically because there are too many valid reports on your content."
-              : "❌ Akunmu otomatis diblokir karena terlalu banyak laporan valid terhadap kontenmu."
+        if (error) {
+          console.error(
+            "Gagal insert reported_messages (post_chat):",
+            error.message
           );
-        } catch (_) {}
+        }
 
-        // Beritahu grup admin jika ada
-        const autoBanLinesId = [
-          "🛑 *Auto-ban pengguna*",
-          "",
-          `• User: ${reportedUserId}`,
-          `• Total laporan valid: ${trust.total_reports_valid} / 15`,
-          "• Alasan: terlalu banyak laporan valid terhadap konten.",
-        ];
-        const autoBanLinesEn = [
-          "🛑 *User auto-banned*",
-          "",
-          `• User: ${reportedUserId}`,
-          `• Total valid reports: ${trust.total_reports_valid} / 15`,
-          "• Reason: too many valid reports on content.",
-        ];
-        const autoBanTextId = autoBanLinesId.join("\n");
-        const autoBanTextEn = autoBanLinesEn.join("\n");
-
+        // kirim log ke grup admin
         if (REPORT_LOG_CHAT_ID) {
-          try {
-            await bot.api.sendMessage(
-              REPORT_LOG_CHAT_ID,
-              autoBanTextId,
-              {
-                parse_mode: "Markdown",
-                message_thread_id:
-                  REPORT_LOG_TOPIC_ID && REPORT_LOG_TOPIC_ID > 0
-                    ? REPORT_LOG_TOPIC_ID
-                    : undefined,
-              }
-            );
-          } catch (_) {}
-        }
+          const reasonMapId = {
+            abuse: "kasar / kata kasar",
+            spam: "spam",
+            hate: "SARA / pelecehan",
+            nsfw: "konten dewasa",
+            other: "lainnya",
+          };
+          const reasonTextId = reasonMapId[reasonKey] || reasonKey;
 
-        // DM ke setiap admin
-        for (const admin of ADMIN_IDS) {
+          const linesId = [
+            "Laporan setelah chat:",
+            "",
+            `Pelapor: ${fromId}`,
+            `Terlapor: ${partnerId}`,
+            `Alasan: ${reasonTextId}`,
+            data && data.id ? `ID laporan: ${data.id}` : "",
+          ].filter(Boolean);
+
           try {
-            const aLang = await getUserLang(admin);
-            const t = aLang === "en" ? autoBanTextEn : autoBanTextId;
-            await bot.api.sendMessage(admin, t, { parse_mode: "Markdown" });
+            await bot.api.sendMessage(REPORT_LOG_CHAT_ID, linesId.join("\n"), {
+              message_thread_id:
+                REPORT_LOG_TOPIC_ID && REPORT_LOG_TOPIC_ID > 0
+                  ? REPORT_LOG_TOPIC_ID
+                  : undefined,
+            });
+          } catch (e) {
+            console.error("Gagal kirim log post-chat report:", e.message);
+          }
+        }
+      } catch (e) {
+        console.error("Gagal proses post-chat report:", e.message);
+      }
+
+      const lang = await getUserLang(fromId);
+      const text =
+        lang === "en"
+          ? "Your report after chat has been sent to the admin."
+          : "Laporanmu setelah chat sudah dikirim ke admin.";
+
+      try {
+        await ctx.editMessageText(text);
+      } catch (e) {
+        console.error("Gagal edit pesan fb_reason:", e.message);
+        await ctx.answerCallbackQuery({ text, show_alert: false });
+      }
+
+      // auto-ban sederhana: jika total_reports_valid sudah tinggi (mengikuti aturan eksisting)
+      try {
+        const trustNow = await getUserTrust(partnerId);
+        if (trustNow.total_reports_valid >= 15) {
+          await banUser(
+            partnerId,
+            "auto-ban: too many valid reports (including post-chat)"
+          );
+          try {
+            const uLang = await getUserLang(partnerId);
+            const msgUser =
+              uLang === "en"
+                ? "Your account has been blocked because there are too many valid reports about your behavior."
+                : "Akunmu diblokir karena terlalu banyak laporan valid terhadap perilakumu.";
+            await bot.api.sendMessage(partnerId, msgUser);
           } catch (_) {}
         }
+      } catch (e) {
+        console.error("Gagal cek auto-ban setelah post-chat report:", e.message);
       }
     }
-
-    await ctx.answerCallbackQuery({
-      text:
-        lang === "en"
-          ? "Media has been banned. Similar content will be blocked."
-          : "Media telah diblokir. Konten serupa akan diblokir.",
-      show_alert: false,
-    });
-
-    const msg = ctx.callbackQuery.message;
-    if (msg) {
-      try {
-        await bot.api.editMessageReplyMarkup(msg.chat.id, msg.message_id, {
-          reply_markup: { inline_keyboard: [] },
-        });
-      } catch (_) {}
-      try {
-        await bot.api.sendMessage(
-          msg.chat.id,
-          lang === "en"
-            ? `✅ Media banned (reported user ${reportedUserId}).`
-            : `✅ Media diblokir (user terlapor ${reportedUserId}).`,
-          {
-            reply_to_message_id: msg.message_id,
-            message_thread_id:
-              REPORT_LOG_TOPIC_ID && REPORT_LOG_TOPIC_ID > 0
-                ? REPORT_LOG_TOPIC_ID
-                : undefined,
-          }
-        );
+  );
       } catch (_) {}
     }
   });
