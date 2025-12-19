@@ -66,6 +66,7 @@ const {
   clearTargetGender,
 } = require("./db");
 
+const BOT_TOKEN = process.env.BOT_TOKEN;
 const TRAKTEER_URL = process.env.TRAKTEER_URL || "";
 const TRAKTEER_WEBHOOK_SECRET =
   process.env.TRAKTEER_WEBHOOK_SECRET || "";
