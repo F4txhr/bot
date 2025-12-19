@@ -760,6 +760,11 @@ async function handlePremium(ctx) {
   const userId = ctx.from.id;
   const lang = await getUserLang(userId);
   const premium = await isPremium(userId);
+  const stats = await getUserStats(userId);
+  const premiumExpire =
+    stats && stats.premium_expires_at
+      ? new Date(stats.premium_expires_at)
+      : null;
 
   const manualEnabled = await isPaymentEnabled("manual");
   const trakteerEnabled = await isPaymentEnabled("trakteer");
@@ -822,12 +827,18 @@ async function handlePremium(ctx) {
           "",
         ];
 
+    const expireLineEn =
+      premium && premiumExpire
+        ? `• Premium valid until: ${premiumExpire.toLocaleString("en-US")}`
+        : "";
+
     text = [
       "💎 *Premium*",
       "",
       premium
         ? "• Status: You are currently a premium user."
         : "• Status: You are currently not premium.",
+      expireLineEn,
       "",
       "• Each Rp 1.000 = 1 day of premium.",
       "  Example:",
@@ -836,7 +847,9 @@ async function handlePremium(ctx) {
       "",
       ...reminder,
       "Then choose one of the payment methods below:",
-    ].join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
   } else {
     const reminder = reusedExisting
       ? [
@@ -853,22 +866,21 @@ async function handlePremium(ctx) {
           "",
         ];
 
+    const expireLineId =
+      premium && premiumExpire
+        ? `• Premium berlaku sampai: ${premiumExpire.toLocaleString("id-ID")}`
+        : "";
+
     text = [
       "💎 *Premium*",
       "",
       premium
         ? "• Status: Kamu saat ini adalah pengguna premium."
         : "• Status: Kamu saat ini belum premium.",
+      expireLineId,
       "",
       "• Setiap Rp 1.000 = 1 hari premium.",
-      "  Contoh:",
-      "  - Rp 3.000 → 3 hari",
-      "  - Rp 10.000 → 10 hari",
-      "",
-      ...reminder,
-      "Lalu pilih salah satu metode pembayaran di bawah:",
-    ].join("\n");
-  }
+     
 
   const keyboard = new InlineKeyboard();
   if (manualEnabled) {
