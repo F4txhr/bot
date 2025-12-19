@@ -31,18 +31,19 @@ const bot = new Bot(BOT_TOKEN);
 
 function verifyTrakteerSignature(rawBody, secret, headers) {
   if (!secret) return true;
-  const sig =
+
+  // Trakteer mengirimkan token mentah (bukan HMAC body).
+  // Coba beberapa nama header yang mungkin dipakai.
+  const token =
+    headers["x-webhook-token"] ||
+    headers["X-Webhook-Token"] ||
     headers["x-trakteer-signature"] ||
     headers["X-Trakteer-Signature"] ||
     "";
-  if (!sig) return false;
 
-  const expected = crypto
-    .createHmac("sha256", secret)
-    .update(rawBody, "utf8")
-    .digest("hex");
+  if (!token) return false;
 
-  return sig === expected;
+  return token === secret;
 }
 
 /**
