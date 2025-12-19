@@ -2346,9 +2346,6 @@ async function main() {
       }
     }
   );
-      } catch (_) {}
-    }
-  });
 
   bot.command("stats", async (ctx) => {
     const userId = ctx.from.id;
