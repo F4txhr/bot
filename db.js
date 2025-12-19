@@ -1226,6 +1226,37 @@ async function adjustUserTrust(userId, delta) {
   return { score: newScore, total_reports_valid: current.total_reports_valid };
 }
 
+/** ========== CHAT FEEDBACK ========== */
+/*
+ * Schema yang direkomendasikan:
+ *
+ * create table if not exists chat_feedback (
+ *   id bigserial primary key,
+ *   user_id bigint not null,
+ *   partner_id bigint not null,
+ *   type text not null,      -- 'like' | 'dislike' | 'report'
+ *   reason text,
+ *   created_at timestamptz default now()
+ * );
+ */
+
+async function saveChatFeedback({ userId, partnerId, type, reason = null }) {
+  if (!userId || !partnerId || !type) return;
+
+  const payload = {
+    user_id: userId,
+    partner_id: partnerId,
+    type,
+    reason: reason || null,
+    created_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase.from("chat_feedback").insert(payload);
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase saveChatFeedback error:", error.message);
+  }
+}
+
 /** ========== USER GENDER PROFILE ========== */
 /*
  * Schema yang direkomendasikan:
@@ -1372,7 +1403,9 @@ module.exports = {
   // trust
   getUserTrust,
   adjustUserTrust,
-  // gender profile
+  // feedback
+  saveChatFeedback,
+  // profile
   getUserProfile,
   setMyGender,
   setTargetGender,

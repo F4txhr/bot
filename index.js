@@ -6,32 +6,42 @@ require("dotenv").config();
 const {
   supabase,
   initDb,
+  // matching
   getPartner,
   setPair,
   clearPair,
   removeFromQueue,
   popFromQueueExcept,
   pushToQueue,
+  // report & ban
   isBanned,
   banUser,
   unbanUser,
   addReport,
+  // user settings
   getUserLang,
   setUserLang,
+  // premium
   isPremium,
   extendPremium,
+  // stats
   incrementChatCount,
   getUserStats,
+  // payment toggles
   setPaymentEnabled,
   isPaymentEnabled,
+  // payment sessions
   setPaymentSession,
   getPaymentSession,
+  // payments log
   logPayment,
   getPaymentHistory,
+  // payment codes & discounts
   savePaymentCode,
   getPendingPaymentCode,
   findUserByPaymentCode,
   markPaymentCodeUsed,
+  // discounts
   createDiscountCode,
   getDiscountInfo,
   assignDiscountToUser,
@@ -44,22 +54,17 @@ const {
   countSimilarReports,
   banMedia,
   isMediaBanned,
+  // trust
   getUserTrust,
   adjustUserTrust,
+  // feedback
+  saveChatFeedback,
+  // profile
   getUserProfile,
   setMyGender,
   setTargetGender,
   clearTargetGender,
-} = require("./db");
-
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const ADMIN_IDS = (process.env.ADMIN_IDS || "")
-  .split(",")
-  .map((x) => x.trim())
-  .filter(Boolean)
-  .map((x) => Number(x))
-  .filter((x) => !Number.isNaN(x));
-const TRAKTEER_URL = process.env.TRAKTEER_URL || "";
+} = require("./d_code.TRAKTEER_URL || "";
 const TRAKTEER_WEBHOOK_SECRET =
   process.env.TRAKTEER_WEBHOOK_SECRET || "";
 const E_WALLET_NUMBER = (process.env.E_WALLET_NUMBER || "089647770084").trim();
@@ -428,6 +433,28 @@ async function startSearch(ctx) {
   }
 }
 
+async function sendPostChatFeedbackPrompt(userId, partnerId) {
+  if (!partnerId || partnerId === userId) return;
+  const lang = await getUserLang(userId);
+
+  const text =
+    lang === "en"
+      ? "Chat session ended. How was your experience with your partner?"
+      : "Sesi chat selesai. Bagaimana pengalamanmu dengan partner ini?";
+
+  const kb = new InlineKeyboard()
+    .text("Suka", `fb_like:${partnerId}`)
+    .text("Tidak suka", `fb_dislike:${partnerId}`)
+    .row()
+    .text("Laporkan", `fb_report:${partnerId}`);
+
+  try {
+    await bot.api.sendMessage(userId, text, { reply_markup: kb });
+  } catch (e) {
+    console.error("Gagal kirim prompt feedback:", e.message);
+  }
+}
+
 async function stopChat(ctx) {
   const userId = ctx.from.id;
 
@@ -435,19 +462,23 @@ async function stopChat(ctx) {
 
   const partnerId = await clearPair(userId);
   if (!partnerId) {
-    await ctx.reply("ℹ️ Kamu tidak sedang dalam obrolan.");
+    await ctx.reply("Kamu tidak sedang dalam obrolan.");
     return;
   }
 
-  await ctx.reply("⛔ Kamu telah keluar dari obrolan.");
+  await ctx.reply("Kamu telah keluar dari obrolan.");
   try {
     await bot.api.sendMessage(
       partnerId,
-      "⛔ Pasanganmu keluar dari obrolan."
+      "Pasanganmu keluar dari obrolan."
     );
   } catch (err) {
     console.error("Gagal kirim pesan ke partner:", err.message);
   }
+
+  // kirim permintaan feedback ke kedua sisi
+  await sendPostChatFeedbackPrompt(userId, partnerId);
+  await sendPostChatFeedbackPrompt(partnerId, userId);
 }
 
 async function handleReport(ctx) {
