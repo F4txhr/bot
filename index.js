@@ -2548,67 +2548,54 @@ async function main() {
           ? "💳 Your recent payment history:"
           : `💳 Recent payment history for user ${targetUserId}:`
       );
+      lines.push(
+        "date | method | amount | days | status | code",
+        "----------------------------------------------"
+      );
     } else {
       lines.push(
         targetUserId === userId
           ? "💳 Riwayat pembayaran terakhirmu:"
           : `💳 Riwayat pembayaran terakhir untuk user ${targetUserId}:`
       );
+      lines.push(
+        "tanggal | metode | nominal | hari | status | kode",
+        "--------------------------------------------------"
+      );
     }
 
     for (const item of history) {
-      const created = item.created_at
+      const dt = item.created_at
         ? new Date(item.created_at).toLocaleString(
             lang === "en" ? "en-US" : "id-ID"
           )
         : "-";
-      const statusLine =
-        lang === "en"
-          ? `• Status: ${item.status || "?"}`
-          : `• Status: ${item.status || "?"}`;
-      const methodLine =
-        lang === "en"
-          ? `• Method: ${item.method || "-"}`
-          : `• Metode: ${item.method || "-"}`;
-      const amountLine =
-        lang === "en"
-          ? `• Amount: Rp ${
-              item.amount ? item.amount.toLocaleString("id-ID") : 0
-            }`
-          : `• Nominal: Rp ${
-              item.amount ? item.amount.toLocaleString("id-ID") : 0
-            }`;
-      const daysLine =
-        lang === "en"
-          ? `• Days: ${item.days || 0}`
-          : `• Hari: ${item.days || 0}`;
-      const codeLine =
-        item.code && item.code.length
-          ? lang === "en"
-            ? `• Code: ${item.code}`
-            : `• Kode: ${item.code}`
-          : "";
-      const dateLine =
-        lang === "en"
-          ? `• Date: ${created}`
-          : `• Tanggal: ${created}`;
+      const method = item.method || "-";
+      const amount = item.amount || 0;
+      const days = item.days || 0;
+      const status = item.status || "ok";
+      const code = item.code || "";
 
-      lines.push(
-        [
-          "",
-          dateLine,
-          methodLine,
-          amountLine,
-          daysLine,
-          statusLine,
-          codeLine,
-        ]
-          .filter(Boolean)
-          .join("\n")
-      );
+      const amountStr = `Rp ${amount.toLocaleString("id-ID")}`;
+      const daysStr =
+        lang === "en" ? `${days} day(s)` : `${days} hari`;
+
+      const line = [
+        dt,
+        method,
+        amountStr,
+        daysStr,
+        status,
+        code,
+      ]
+        .filter(Boolean)
+        .join(" | ");
+
+      lines.push(line);
     }
 
-    await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
+    await ctx.reply(lines.join("\n"));
+  });
   });
 
   bot.command("payment", async (ctx) => {
