@@ -99,6 +99,29 @@ const MESSAGE_RATE_WINDOW_MS = 8000;
 const MESSAGE_RATE_LIMIT_MAX = 10;
 const messageRateBuckets = new Map(); // userId -> { count, resetAt }
 
+// helper reply keyboard sederhana
+function buildIdleKeyboard(lang) {
+  // saat tidak dalam chat
+  return {
+    keyboard: [
+      [{ text: "/search" }, { text: "/premium" }],
+      [{ text: "/stats" }, { text: "/help" }],
+    ],
+    resize_keyboard: true,
+  };
+}
+
+function buildChatKeyboard(lang) {
+  // saat sedang dalam chat
+  return {
+    keyboard: [
+      [{ text: "/next" }, { text: "/stop" }],
+      [{ text: "/report" }, { text: "/showid" }],
+    ],
+    resize_keyboard: true,
+  };
+}
+
 // daftar ekstensi file berbahaya untuk dokumen
 const DANGEROUS_EXTENSIONS = [
   ".exe",
@@ -415,24 +438,32 @@ async function startSearch(ctx) {
   if (otherId && otherId !== userId) {
     await setPair(userId, otherId);
 
-    await ctx.reply(
+    const textMatched =
       lang === "en"
-        ? "Partner found. Mulai ngobrol sekarang."
-        : "Ditemukan pasangan. Mulai ngobrol sekarang."
-    );
-    await bot.api.sendMessage(
-      otherId,
-      lang === "en"
-        ? "Partner found. Mulai ngobrol sekarang."
-        : "Ditemukan pasangan. Mulai ngobrol sekarang."
-    );
+        ? "Partner found. Start chatting now."
+        : "Ditemukan pasangan. Mulai ngobrol sekarang.";
+
+    await ctx.reply(textMatched, {
+      reply_markup: buildChatKeyboard(lang),
+    });
+
+    try {
+      const otherLang = await getUserLang(otherId);
+      await bot.api.sendMessage(otherId, textMatched, {
+        reply_markup: buildChatKeyboard(otherLang),
+      });
+    } catch (e) {
+      console.error("Gagal kirim pesan match ke partner:", e.message);
+    }
   } else {
     await pushToQueue(userId);
     const msg =
       lang === "en"
         ? "You are in the queue, waiting for a partner..."
         : "Kamu masuk antrian, menunggu pasangan...";
-    await ctx.reply(msg);
+    await ctx.reply(msg, {
+      reply_markup: buildIdleKeyboard(lang),
+    });
   }
 }
 
@@ -465,15 +496,32 @@ async function stopChat(ctx) {
 
   const partnerId = await clearPair(userId);
   if (!partnerId) {
-    await ctx.reply("Kamu tidak sedang dalam obrolan.");
+    const lang = await getUserLang(userId);
+    await ctx.reply(
+      lang === "en"
+        ? "You are not in a chat right now."
+        : "Kamu tidak sedang dalam obrolan.",
+      { reply_markup: buildIdleKeyboard(lang) }
+    );
     return;
   }
 
-  await ctx.reply("Kamu telah keluar dari obrolan.");
+  const langSelf = await getUserLang(userId);
+  await ctx.reply(
+    langSelf === "en"
+      ? "You have left the chat."
+      : "Kamu telah keluar dari obrolan.",
+    { reply_markup: buildIdleKeyboard(langSelf) }
+  );
+
   try {
+    const langPartner = await getUserLang(partnerId);
     await bot.api.sendMessage(
       partnerId,
-      "Pasanganmu keluar dari obrolan."
+      langPartner === "en"
+        ? "Your partner has left the chat."
+        : "Pasanganmu keluar dari obrolan.",
+      { reply_markup: buildIdleKeyboard(langPartner) }
     );
   } catch (err) {
     console.error("Gagal kirim pesan ke partner:", err.message);
@@ -963,6 +1011,7 @@ async function main() {
 
     await ctx.reply(lang === "en" ? textEn : textId, {
       parse_mode: "Markdown",
+      reply_markup: buildIdleKeyboard(lang),
     });
   });
 
@@ -1012,7 +1061,9 @@ async function main() {
         );
       }
 
-      await ctx.reply(lines.join("\n"));
+      await ctx.reply(lines.join("\n"), {
+        reply_markup: buildIdleKeyboard(lang),
+      });
     } else {
       const lines = [
         "❓ *Bantuan ShadowChat*",
@@ -1054,7 +1105,9 @@ async function main() {
         );
       }
 
-      await ctx.reply(lines.join("\n"));
+      await ctx.reply(lines.join("\n"), {
+        reply_markup: buildIdleKeyboard(lang),
+      });
     }
   });
 
