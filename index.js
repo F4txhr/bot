@@ -2430,11 +2430,37 @@ async function main() {
     const lang = await getUserLang(userId);
     const premium = await isPremium(userId);
     const stats = await getUserStats(userId);
+    const trust = await getUserTrust(userId);
+    const totalChats = stats.total_chats || 0;
+
+    // level sederhana berdasarkan totalChats
+    let level = 1;
+    let titleId = "Pendatang baru";
+    let titleEn = "Newcomer";
+
+    if (totalChats >= 100) {
+      level = 4;
+      titleId = "Sosial expert";
+      titleEn = "Social expert";
+    } else if (totalChats >= 50) {
+      level = 3;
+      titleId = "Teman ngobrol";
+      titleEn = "Chat buddy";
+    } else if (totalChats >= 10) {
+      level = 2;
+      titleId = "Mulai aktif";
+      titleEn = "Getting active";
+    }
+
+    const trustLineId = `• Trust score: ${trust.score}/100 (laporan valid: ${trust.total_reports_valid} / 15)`;
+    const trustLineEn = `• Trust score: ${trust.score}/100 (valid reports: ${trust.total_reports_valid} / 15)`;
 
     const linesId = [
       "📊 *Statistik kamu*",
       "",
-      `• Total obrolan (search): ${stats.total_chats || 0}`,
+      `• Level: ${level} (${titleId})`,
+      `• Total obrolan (search): ${totalChats}`,
+      trustLineId,
       premium ? "• Status: Premium ✅" : "• Status: Gratis",
       stats.premium_expires_at
         ? `• Premium sampai: ${new Date(
@@ -2451,7 +2477,9 @@ async function main() {
     const linesEn = [
       "📊 *Your stats*",
       "",
-      `• Total chats (search): ${stats.total_chats || 0}`,
+      `• Level: ${level} (${titleEn})`,
+      `• Total chats (search): ${totalChats}`,
+      trustLineEn,
       premium ? "• Status: Premium ✅" : "• Status: Free",
       stats.premium_expires_at
         ? `• Premium until: ${new Date(
@@ -2467,6 +2495,7 @@ async function main() {
 
     await ctx.reply(lang === "en" ? linesEn.join("\n") : linesId.join("\n"), {
       parse_mode: "Markdown",
+      reply_markup: buildIdleKeyboard(lang),
     });
   });
 
