@@ -892,9 +892,6 @@ async function handlePremium(ctx) {
   }
 
   const keyboard = new InlineKeyboard();
-     
-
-  const keyboard = new InlineKeyboard();
   if (manualEnabled) {
     keyboard.text(
       lang === "en" ? "📱 Manual transfer" : "📱 Transfer manual",
