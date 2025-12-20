@@ -70,6 +70,10 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const TRAKTEER_URL = process.env.TRAKTEER_URL || "";
 const TRAKTEER_WEBHOOK_SECRET =
   process.env.TRAKTEER_WEBHOOK_SECRET || "";
+const ADMIN_IDS = (process.env.ADMIN_IDS || "")
+  .split(",")
+  .map((x) => Number(x.trim()))
+  .filter((x) => x);
 const E_WALLET_NUMBER = (process.env.E_WALLET_NUMBER || "089647770084").trim();
 const E_WALLET_NAME = (process.env.E_WALLET_NAME || "Achmad fatkurrois").trim();
 const PAYMENT_LOG_CHAT_ID = Number(process.env.PAYMENT_LOG_CHAT_ID || "0");
