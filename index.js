@@ -2596,7 +2596,6 @@ async function main() {
 
     await ctx.reply(lines.join("\n"));
   });
-  });
 
   bot.command("payment", async (ctx) => {
     const userId = ctx.from.id;
