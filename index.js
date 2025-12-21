@@ -2541,60 +2541,65 @@ async function main() {
       return;
     }
 
-    const lines = [];
-    if (lang === "en") {
-      lines.push(
-        targetUserId === userId
-          ? "💳 Your recent payment history:"
-          : `💳 Recent payment history for user ${targetUserId}:`
-      );
-      lines.push(
-        "date | method | amount | days | status | code",
-        "----------------------------------------------"
-      );
-    } else {
-      lines.push(
-        targetUserId === userId
-          ? "💳 Riwayat pembayaran terakhirmu:"
-          : `💳 Riwayat pembayaran terakhir untuk user ${targetUserId}:`
-      );
-      lines.push(
-        "tanggal | metode | nominal | hari | status | kode",
-        "--------------------------------------------------"
-      );
-    }
+    const blocks = [];
+    const locale = lang === "en" ? "en-US" : "id-ID";
 
     for (const item of history) {
       const dt = item.created_at
-        ? new Date(item.created_at).toLocaleString(
-            lang === "en" ? "en-US" : "id-ID"
-          )
+        ? new Date(item.created_at).toLocaleString(locale)
         : "-";
       const method = item.method || "-";
       const amount = item.amount || 0;
       const days = item.days || 0;
       const status = item.status || "ok";
       const code = item.code || "";
-
+      const wallet = item.wallet || "";
       const amountStr = `Rp ${amount.toLocaleString("id-ID")}`;
-      const daysStr =
-        lang === "en" ? `${days} day(s)` : `${days} hari`;
+      const daysStr = lang === "en" ? `${days} day(s)` : `${days} hari`;
 
-      const line = [
-        dt,
-        method,
-        amountStr,
-        daysStr,
-        status,
-        code,
-      ]
-        .filter(Boolean)
-        .join(" | ");
-
-      lines.push(line);
+      if (lang === "en") {
+        blocks.push(
+          [
+            "────────────────────",
+            `Date      : ${dt}`,
+            `Method    : ${method}`,
+            `Amount    : ${amountStr}`,
+            `Days      : ${daysStr}`,
+            `Status    : ${status}`,
+            code ? `Code      : ${code}` : "",
+            wallet ? `Wallet    : ${wallet}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        );
+      } else {
+        blocks.push(
+          [
+            "────────────────────",
+            `Tanggal   : ${dt}`,
+            `Metode    : ${method}`,
+            `Nominal   : ${amountStr}`,
+            `Hari      : ${daysStr}`,
+            `Status    : ${status}`,
+            code ? `Kode      : ${code}` : "",
+            wallet ? `Wallet    : ${wallet}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        );
+      }
     }
 
-    await ctx.reply(lines.join("\n"));
+    const header =
+      lang === "en"
+        ? targetUserId === userId
+          ? "💳 Your recent payment history:"
+          : `💳 Recent payment history for user ${targetUserId}:`
+        : targetUserId === userId
+        ? "💳 Riwayat pembayaran terakhirmu:"
+        : `💳 Riwayat pembayaran terakhir untuk user ${targetUserId}:`;
+
+    await ctx.reply([header, "", ...blocks].join("\n"));
   });
 
   bot.command("payment", async (ctx) => {
