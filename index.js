@@ -439,7 +439,12 @@ async function startSearch(ctx) {
 
   // fallback ke matching biasa jika tidak ditemukan
   if (!otherId) {
-    otherId = await popFromQueueExcept(userId);
+    // jika user premium, coba panggil popFromQueueExcept dengan preferPremium = true
+    if (premium) {
+      otherId = await popFromQueueExcept(userId, true);
+    } else {
+      otherId = await popFromQueueExcept(userId, false);
+    }
   }
 
   if (otherId && otherId !== userId) {
@@ -1056,6 +1061,7 @@ async function main() {
         "/report - report your current partner",
         "/lang - change language (id/en)",
         "/showid - share your profile link with partner",
+        "/setinterest - choose your interests",
         "/premium - check premium status & payment methods",
         "/stats - view your chat statistics",
         "/payhistory - view your payment history",
@@ -1100,6 +1106,7 @@ async function main() {
         "/report - laporkan pasangan yang melanggar",
         "/lang - ganti bahasa (id/en)",
         "/showid - kirim link profilmu ke pasangan",
+        "/setinterest - pilih minat kamu",
         "/premium - cek status premium & metode pembayaran",
         "/stats - lihat statistik chat kamu",
         "/payhistory - lihat riwayat pembayaranmu",

@@ -147,41 +147,71 @@ async function removeFromQueue(userId) {
 /**
  * Mengambil satu user dari antrean (bukan diri sendiri).
  */
-async function popFromQueueExcept(userId) {
-  const { data, error } = await supabase
-    .from("queue_free")
-    .select("user_id")
-    .neq("user_id", userId)
-    .order("created_at", { ascending: true })
-    .limit(1);
+async function popFromQueueExcept(userId, preferPremium = false) {
+  // Ambil kandidat dari queue_free yang bukan user ini
+  // Jika preferPremium = true, prioritaskan user premium terlebih dahulu.
+  try {
+    let otherId = null;
 
-  if (error) {
-    console.error("Supabase popFromQueueExcept select error:", error.message);
+    if (preferPremium) {
+      // Cari premium dulu
+      const { data: premList, error: premErr } = await supabase
+        .from("queue_free")
+        .select("user_id, joined_at")
+        .neq("user_id", userId)
+        .order("joined_at", { ascending: true });
+
+      if (premErr && premErr.code !== "PGRST116") {
+        console.error(
+          "Supabase popFromQueueExcept premium list error:",
+          premErr.message
+        );
+      } else if (Array.isArray(premList) && premList.length > 0) {
+        for (const row of premList) {
+          const uid = row.user_id;
+          if (!uid) continue;
+          const isPrem = await isPremium(uid);
+          if (isPrem) {
+            otherId = uid;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!otherId) {
+      // fallback: ambil teratas apa adanya
+      const { data, error } = await supabase
+        .from("queue_free")
+        .select("user_id, joined_at")
+        .neq("user_id", userId)
+        .order("joined_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (error && error.code !== "PGRST116") {
+        console.error("Supabase popFromQueueExcept error:", error.message);
+        return null;
+      }
+      if (!data) return null;
+      otherId = data.user_id;
+    }
+
+    const { error: delErr } = await supabase
+      .from("queue_free")
+      .delete()
+      .eq("user_id", otherId);
+
+    if (delErr && delErr.code !== "PGRST116") {
+      console.error("Supabase popFromQueueExcept delete error:", delErr.message);
+    }
+
+    return otherId;
+  } catch (e) {
+    console.error("Supabase popFromQueueExcept failure:", e.message);
     return null;
   }
-  if (!data || !data.length) return null;
-
-  const otherId = data[0].user_id;
-
-  const { error: delErr } = await supabase
-    .from("queue_free")
-    .delete()
-    .eq("user_id", otherId);
-
-  if (delErr) {
-    console.error(
-      "Supabase popFromQueueExcept delete error:",
-      delErr.message
-    );
-  }
-
-  return Number(otherId);
-}
-
-async function pushToQueue(userId) {
-  const now = new Date().toISOString();
-
-  const { error } = await supabase
+} = await supabase
     .from("queue_free")
     .upsert({ user_id: userId, created_at: now }, { onConflict: "user_id" });
 
