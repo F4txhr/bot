@@ -59,6 +59,9 @@ const {
   adjustUserTrust,
   // feedback
   saveChatFeedback,
+  // interests
+  getUserInterests,
+  setUserInterests,
   // profile
   getUserProfile,
   setMyGender,
@@ -740,17 +743,57 @@ async function handleReport(ctx) {
 
 async function handleLang(ctx) {
   const userId = ctx.from.id;
-  const args = ctx.match ? ctx.match.trim().split(/\s+/) : [];
+  const lang = await getUserLang(userId);
 
-  const currentLang = await getUserLang(userId);
+  const text =
+    lang === "en"
+      ? "Choose your language:"
+      : "Pilih bahasa yang kamu inginkan:";
 
-  if (args.length > 0) {
-    const arg = args[0].toLowerCase();
-    if (["id", "indo", "indonesia"].includes(arg)) {
-      await setUserLang(userId, "id");
-      await ctx.reply("✅ Bahasa telah diubah ke Bahasa Indonesia.");
-      return;
-    }
+  const kb = new InlineKeyboard()
+    .text("Bahasa Indonesia", "lang:id")
+    .text("English", "lang:en");
+
+  await ctx.reply(text, { reply_markup: kb });
+}
+
+const AVAILABLE_INTERESTS = [
+  { key: "game", id: "Game", en: "Games" },
+  { key: "anime", id: "Anime", en: "Anime" },
+  { key: "music", id: "Musik", en: "Music" },
+  { key: "school", id: "Sekolah/kuliah", en: "School/college" },
+  { key: "work", id: "Kerja/bisnis", en: "Work/business" },
+  { key: "curhat", id: "Curhat", en: "Venting" },
+  { key: "serius", id: "Serius", en: "Serious talk" },
+  { key: "random", id: "Random", en: "Random" },
+];
+
+async function handleSetInterest(ctx) {
+  const userId = ctx.from.id;
+  const lang = await getUserLang(userId);
+  const current = await getUserInterests(userId);
+
+  const title =
+    lang === "en"
+      ? "Choose your interests (tap to toggle):"
+      : "Pilih minatmu (tap untuk mengaktifkan/nonaktifkan):";
+
+  const kb = new InlineKeyboard();
+
+  for (const it of AVAILABLE_INTERESTS) {
+    const label = lang === "en" ? it.en : it.id;
+    const active = current.includes(it.key);
+    const text = active ? `✅ ${label}` : label;
+    kb.text(text, `interest_toggle:${it.key}`).row();
+  }
+
+  kb.text(
+    lang === "en" ? "Done" : "Selesai",
+    "interest_done"
+  );
+
+  await ctx.reply(title, { reply_markup: kb });
+}
     if (["en", "eng", "english"].includes(arg)) {
       await setUserLang(userId, "en");
       await ctx.reply("✅ Language has been set to English.");
@@ -1239,6 +1282,11 @@ async function main() {
 
   bot.command("premium", async (ctx) => {
     await handlePremium(ctx);
+  });
+
+  // Set minat/interest user
+  bot.command("setinterest", async (ctx) => {
+    await handleSetInterest(ctx);
   });
 
   // Set gender profil user (mygender)
@@ -2171,6 +2219,81 @@ async function main() {
         show_alert: false,
       });
     }
+  });
+
+  // Inline interest toggle
+  bot.callbackQuery(/^interest_toggle:([a-z0-9_]+)$/, async (ctx) => {
+    const userId = ctx.from.id;
+    const key = ctx.match[1];
+    const lang = await getUserLang(userId);
+    const current = await getUserInterests(userId);
+
+    const exists = current.includes(key);
+    let next;
+    if (exists) {
+      next = current.filter((k) => k !== key);
+    } else {
+      next = [...current, key];
+    }
+
+    await setUserInterests(userId, next);
+
+    const title =
+      lang === "en"
+        ? "Choose your interests (tap to toggle):"
+        : "Pilih minatmu (tap untuk mengaktifkan/nonaktifkan):";
+
+    const kb = new InlineKeyboard();
+    for (const it of AVAILABLE_INTERESTS) {
+      const label = lang === "en" ? it.en : it.id;
+      const active = next.includes(it.key);
+      const text = active ? `✅ ${label}` : label;
+      kb.text(text, `interest_toggle:${it.key}`).row();
+    }
+    kb.text(lang === "en" ? "Done" : "Selesai", "interest_done");
+
+    try {
+      await ctx.editMessageText(title, { reply_markup: kb });
+    } catch (e) {
+      console.error("Gagal update interest keyboard:", e.message);
+    }
+
+    await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery(/^interest_done$/, async (ctx) => {
+    const userId = ctx.from.id;
+    const lang = await getUserLang(userId);
+    const interests = await getUserInterests(userId);
+
+    const chips =
+      interests.length > 0
+        ? interests
+            .map((k) => {
+              const it = AVAILABLE_INTERESTS.find((x) => x.key === k);
+              if (!it) return k;
+              return lang === "en" ? it.en : it.id;
+            })
+            .join(", ")
+        : lang === "en"
+        ? "none"
+        : "tidak ada";
+
+    const text =
+      lang === "en"
+        ? `Your interests have been updated:\n${chips}`
+        : `Minat kamu telah diperbarui:\n${chips}`;
+
+    try {
+      await ctx.editMessageText(text);
+    } catch (e) {
+      console.error("Gagal edit pesan interest_done:", e.message);
+      try {
+        await ctx.reply(text);
+      } catch (_) {}
+    }
+
+    await ctx.answerCallbackQuery();
   });
 
   // Inline post-chat feedback: like / dislike / report

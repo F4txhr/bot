@@ -1226,6 +1226,61 @@ async function adjustUserTrust(userId, delta) {
   return { score: newScore, total_reports_valid: current.total_reports_valid };
 }
 
+/** ========== USER INTERESTS ========== */
+/*
+ * Schema yang direkomendasikan:
+ *
+ * create table if not exists user_interests (
+ *   user_id bigint not null,
+ *   interest text not null,
+ *   created_at timestamptz default now(),
+ *   primary key (user_id, interest)
+ * );
+ */
+
+async function getUserInterests(userId) {
+  if (!userId) return [];
+  const { data, error } = await supabase
+    .from("user_interests")
+    .select("interest")
+    .eq("user_id", userId);
+
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase getUserInterests error:", error.message);
+    return [];
+  }
+
+  if (!Array.isArray(data)) return [];
+  return data.map((row) => row.interest).filter(Boolean);
+}
+
+async function setUserInterests(userId, interests) {
+  if (!userId) return;
+  const unique = Array.from(new Set((interests || []).filter(Boolean)));
+
+  // hapus semua interest lama, lalu insert yang baru
+  const del = await supabase
+    .from("user_interests")
+    .delete()
+    .eq("user_id", userId);
+  if (del.error && del.error.code !== "PGRST116") {
+    console.error("Supabase setUserInterests delete error:", del.error.message);
+  }
+
+  if (!unique.length) return;
+
+  const rows = unique.map((interest) => ({
+    user_id: userId,
+    interest,
+    created_at: new Date().toISOString(),
+  }));
+
+  const { error } = await supabase.from("user_interests").insert(rows);
+  if (error && error.code !== "PGRST116") {
+    console.error("Supabase setUserInterests insert error:", error.message);
+  }
+}
+
 /** ========== CHAT FEEDBACK ========== */
 /*
  * Schema yang direkomendasikan:
@@ -1403,6 +1458,9 @@ module.exports = {
   // trust
   getUserTrust,
   adjustUserTrust,
+  // interests
+  getUserInterests,
+  setUserInterests,
   // feedback
   saveChatFeedback,
   // profile
