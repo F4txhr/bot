@@ -794,30 +794,6 @@ async function handleSetInterest(ctx) {
 
   await ctx.reply(title, { reply_markup: kb });
 }
-    if (["en", "eng", "english"].includes(arg)) {
-      await setUserLang(userId, "en");
-      await ctx.reply("✅ Language has been set to English.");
-      return;
-    }
-
-    const msg =
-      currentLang === "en"
-        ? "Usage: /lang id | en"
-        : "Cara pakai: /lang id | en";
-    await ctx.reply(msg);
-    return;
-  }
-
-  const text =
-    currentLang === "en"
-      ? "Choose language:"
-      : "Pilih bahasa:";
-  const kb = new InlineKeyboard()
-    .text("Bahasa Indonesia", "lang:id")
-    .text("English", "lang:en");
-
-  await ctx.reply(text, { reply_markup: kb });
-}
 
 async function handleShowId(ctx) {
   const userId = ctx.from.id;
