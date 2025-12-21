@@ -211,13 +211,6 @@ async function popFromQueueExcept(userId, preferPremium = false) {
     console.error("Supabase popFromQueueExcept failure:", e.message);
     return null;
   }
-} = await supabase
-    .from("queue_free")
-    .upsert({ user_id: userId, created_at: now }, { onConflict: "user_id" });
-
-  if (error) {
-    console.error("Supabase pushToQueue error:", error.message);
-  }
 }
 
 /** ========== REPORT & BAN ========== */
