@@ -1,6 +1,43 @@
 require("dotenv").config();
 const { createClient } = require("@supabase/supabase-js");
 
+// Caching untuk fungsi yang sering dipanggil
+const cache = new Map();
+const CACHE_TTL = 300000; // 5 menit dalam milidetik
+
+function getCached(key) {
+  const item = cache.get(key);
+  if (!item) return null;
+  
+  if (Date.now() - item.timestamp > CACHE_TTL) {
+    cache.delete(key);
+    return null;
+  }
+  
+  return item.value;
+}
+
+function setCached(key, value) {
+  cache.set(key, {
+    value,
+    timestamp: Date.now()
+  });
+}
+
+function clearCache() {
+  cache.clear();
+}
+
+// Bersihkan cache secara berkala
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, item] of cache.entries()) {
+    if (now - item.timestamp > CACHE_TTL) {
+      cache.delete(key);
+    }
+  }
+}, 60000); // Bersihkan setiap menit
+
 const { SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
@@ -76,71 +113,190 @@ async function initDb() {
 /** ========== MATCHING & QUEUE ========== */
 
 async function getPartner(userId) {
-  const { data, error } = await supabase
-    .from("pairs")
-    .select("partner_id")
-    .eq("user_id", userId)
-    .limit(1)
-    .maybeSingle();
+  try {
+    const { data, error } = await supabase
+      .from("pairs")
+      .select("partner_id")
+      .eq("user_id", userId)
+      .limit(1)
+      .maybeSingle();
 
-  if (error) {
-    console.error("Supabase getPartner error:", error.message);
+    if (error) {
+      console.error("Supabase getPartner error:", {
+        message: error.message,
+        code: error.code,
+        userId: userId,
+        details: error.details
+      });
+      return null;
+    }
+    
+    if (!data) return null;
+    return Number(data.partner_id);
+  } catch (err) {
+    console.error("Unexpected error in getPartner:", {
+      message: err.message,
+      stack: err.stack,
+      userId: userId
+    });
     return null;
   }
-  if (!data) return null;
-  return Number(data.partner_id);
 }
 
 async function setPair(userA, userB) {
-  const now = new Date().toISOString();
-  const rows = [
-    { user_id: userA, partner_id: userB, created_at: now },
-    { user_id: userB, partner_id: userA, created_at: now },
-  ];
+  try {
+    const now = new Date().toISOString();
+    const rows = [
+      { user_id: userA, partner_id: userB, created_at: now },
+      { user_id: userB, partner_id: userA, created_at: now },
+    ];
 
-  const { error } = await supabase
-    .from("pairs")
-    .upsert(rows, { onConflict: "user_id" });
+    const { error } = await supabase
+      .from("pairs")
+      .upsert(rows, { onConflict: "user_id" });
 
-  if (error) {
-    console.error("Supabase setPair error:", error.message);
-    return;
-  }
+    if (error) {
+      console.error("Supabase setPair error:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        userA: userA,
+        userB: userB
+      });
+      return;
+    }
 
-  const { error: qErr } = await supabase
-    .from("queue_free")
-    .delete()
-    .in("user_id", [userA, userB]);
-
-  if (qErr) {
-    console.error("Supabase setPair queue cleanup error:", qErr.message);
+    const { error: qErr } = await supabase
+      .from("queue_free")
+      .delete()
+      .in("user_id", [userA, userB]);
+      
+    if (qErr) {
+      console.error("Supabase setPair queue cleanup error:", {
+        message: qErr.message,
+        code: qErr.code,
+        userA: userA,
+        userB: userB
+      });
+    }
+  } catch (err) {
+    console.error("Unexpected error in setPair:", {
+      message: err.message,
+      stack: err.stack,
+      userA: userA,
+      userB: userB
+    });
   }
 }
 
 async function clearPair(userId) {
-  const partnerId = await getPartner(userId);
-  if (!partnerId) return null;
+  try {
+    const partnerId = await getPartner(userId);
+    if (!partnerId) return null;
 
-  const { error } = await supabase
-    .from("pairs")
-    .delete()
-    .in("user_id", [userId, partnerId]);
+    const { error } = await supabase
+      .from("pairs")
+      .delete()
+      .in("user_id", [userId, partnerId]);
 
-  if (error) {
-    console.error("Supabase clearPair error:", error.message);
+    if (error) {
+      console.error("Supabase clearPair error:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        userId: userId,
+        partnerId: partnerId
+      });
+      return null;
+    }
+    return partnerId;
+  } catch (err) {
+    console.error("Unexpected error in clearPair:", {
+      message: err.message,
+      stack: err.stack,
+      userId: userId
+    });
     return null;
   }
-  return partnerId;
+}
+
+/**
+ * Menambahkan user ke antrean pencarian pasangan.
+ */
+async function pushToQueue(userId) {
+  try {
+    // Periksa apakah user sudah ada di queue
+    const { data: existingQueue, error: selectError } = await supabase
+      .from("queue_free")
+      .select("user_id")
+      .eq("user_id", userId);
+
+    if (selectError) {
+      console.error("Supabase pushToQueue select error:", {
+        message: selectError.message,
+        code: selectError.code,
+        details: selectError.details,
+        userId: userId
+      });
+      return false;
+    }
+
+    // Jika user sudah ada di queue, tidak perlu ditambahkan lagi
+    if (existingQueue && existingQueue.length > 0) {
+      return true; // Sudah ada di queue
+    }
+
+    // Tambahkan user ke queue
+    const { error } = await supabase
+      .from("queue_free")
+      .insert([
+        {
+          user_id: userId
+        }
+      ]);
+
+    if (error) {
+      console.error("Supabase pushToQueue insert error:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        userId: userId
+      });
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    console.error("Unexpected error in pushToQueue:", {
+      message: err.message,
+      stack: err.stack,
+      userId: userId
+    });
+    return false;
+  }
 }
 
 async function removeFromQueue(userId) {
-  const { error } = await supabase
-    .from("queue_free")
-    .delete()
-    .eq("user_id", userId);
+  try {
+    const { error } = await supabase
+      .from("queue_free")
+      .delete()
+      .eq("user_id", userId);
 
-  if (error) {
-    console.error("Supabase removeFromQueue error:", error.message);
+    if (error) {
+      console.error("Supabase removeFromQueue error:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        userId: userId
+      });
+    }
+  } catch (err) {
+    console.error("Unexpected error in removeFromQueue:", {
+      message: err.message,
+      stack: err.stack,
+      userId: userId
+    });
   }
 }
 
@@ -157,14 +313,18 @@ async function popFromQueueExcept(userId, preferPremium = false) {
       // Cari premium dulu
       const { data: premList, error: premErr } = await supabase
         .from("queue_free")
-        .select("user_id, joined_at")
-        .neq("user_id", userId)
-        .order("joined_at", { ascending: true });
+        .select("user_id")
+        .neq("user_id", userId);
 
       if (premErr && premErr.code !== "PGRST116") {
         console.error(
           "Supabase popFromQueueExcept premium list error:",
-          premErr.message
+          {
+            message: premErr.message,
+            code: premErr.code,
+            userId: userId,
+            preferPremium: preferPremium
+          }
         );
       } else if (Array.isArray(premList) && premList.length > 0) {
         for (const row of premList) {
@@ -173,24 +333,34 @@ async function popFromQueueExcept(userId, preferPremium = false) {
           const isPrem = await isPremium(uid);
           if (isPrem) {
             otherId = uid;
-            break;
+            // Hapus user yang dipilih dari queue
+            await supabase
+              .from("queue_free")
+              .delete()
+              .eq("user_id", uid);
+            return otherId;
           }
         }
       }
     }
 
     if (!otherId) {
-      // fallback: ambil teratas apa adanya
+      // fallback: ambil satu user apa adanya
       const { data, error } = await supabase
         .from("queue_free")
-        .select("user_id, joined_at")
+        .select("user_id")
         .neq("user_id", userId)
-        .order("joined_at", { ascending: true })
         .limit(1)
         .maybeSingle();
 
       if (error && error.code !== "PGRST116") {
-        console.error("Supabase popFromQueueExcept error:", error.message);
+        console.error("Supabase popFromQueueExcept error:", {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          userId: userId,
+          preferPremium: preferPremium
+        });
         return null;
       }
       if (!data) return null;
@@ -203,12 +373,21 @@ async function popFromQueueExcept(userId, preferPremium = false) {
       .eq("user_id", otherId);
 
     if (delErr && delErr.code !== "PGRST116") {
-      console.error("Supabase popFromQueueExcept delete error:", delErr.message);
+      console.error("Supabase popFromQueueExcept delete error:", {
+        message: delErr.message,
+        code: delErr.code,
+        otherId: otherId
+      });
     }
 
     return otherId;
   } catch (e) {
-    console.error("Supabase popFromQueueExcept failure:", e.message);
+    console.error("Supabase popFromQueueExcept failure:", {
+      message: e.message,
+      stack: e.stack,
+      userId: userId,
+      preferPremium: preferPremium
+    });
     return null;
   }
 }
@@ -216,42 +395,84 @@ async function popFromQueueExcept(userId, preferPremium = false) {
 /** ========== REPORT & BAN ========== */
 
 async function isBanned(userId) {
-  const { data, error } = await supabase
-    .from("banned_users")
-    .select("user_id")
-    .eq("user_id", userId)
-    .limit(1);
+  try {
+    const { data, error } = await supabase
+      .from("banned_users")
+      .select("user_id")
+      .eq("user_id", userId)
+      .limit(1);
 
-  if (error) {
-    console.error("Supabase isBanned error:", error.message);
+    if (error) {
+      console.error("Supabase isBanned error:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        userId: userId
+      });
+      return false;
+    }
+    return !!(data && data.length);
+  } catch (err) {
+    console.error("Unexpected error in isBanned:", {
+      message: err.message,
+      stack: err.stack,
+      userId: userId
+    });
     return false;
   }
-  return !!(data && data.length);
 }
 
 async function banUser(userId, reason = "") {
-  const payload = {
-    user_id: userId,
-    reason: reason || null,
-    created_at: new Date().toISOString(),
-  };
-  const { error } = await supabase.from("banned_users").upsert(payload, {
-    onConflict: "user_id",
-  });
+  try {
+    const payload = {
+      user_id: userId,
+      reason: reason || null,
+      created_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from("banned_users").upsert(payload, {
+      onConflict: "user_id",
+    });
 
-  if (error) {
-    console.error("Supabase banUser error:", error.message);
+    if (error) {
+      console.error("Supabase banUser error:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        userId: userId,
+        reason: reason
+      });
+    }
+  } catch (err) {
+    console.error("Unexpected error in banUser:", {
+      message: err.message,
+      stack: err.stack,
+      userId: userId,
+      reason: reason
+    });
   }
 }
 
 async function unbanUser(userId) {
-  const { error } = await supabase
-    .from("banned_users")
-    .delete()
-    .eq("user_id", userId);
+  try {
+    const { error } = await supabase
+      .from("banned_users")
+      .delete()
+      .eq("user_id", userId);
 
-  if (error && error.code !== "PGRST116") {
-    console.error("Supabase unbanUser error:", error.message);
+    if (error && error.code !== "PGRST116") {
+      console.error("Supabase unbanUser error:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        userId: userId
+      });
+    }
+  } catch (err) {
+    console.error("Unexpected error in unbanUser:", {
+      message: err.message,
+      stack: err.stack,
+      userId: userId
+    });
   }
 }
 
@@ -294,87 +515,214 @@ async function addReport(
 /** ========== USER SETTINGS (LANG) ========== */
 
 async function getUserLang(userId) {
-  const { data, error } = await supabase
-    .from("user_settings")
-    .select("lang")
-    .eq("user_id", userId)
-    .limit(1)
-    .maybeSingle();
+  // Cek cache terlebih dahulu
+  const cacheKey = `user_lang_${userId}`;
+  const cached = getCached(cacheKey);
+  if (cached !== null) {
+    return cached;
+  }
+  
+  try {
+    const { data, error } = await supabase
+      .from("user_settings")
+      .select("lang")
+      .eq("user_id", userId)
+      .limit(1)
+      .maybeSingle();
 
-  if (error) {
-    console.error("Supabase getUserLang error:", error.message);
+    if (error) {
+      console.error("Supabase getUserLang error:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        userId: userId
+      });
+      // Tetap cache hasil error untuk mencegah flooding
+      setCached(cacheKey, "id");
+      return "id";
+    }
+    
+    const lang = (data && data.lang) || "id";
+    setCached(cacheKey, lang);
+    return lang;
+  } catch (err) {
+    console.error("Unexpected error in getUserLang:", {
+      message: err.message,
+      stack: err.stack,
+      userId: userId
+    });
+    // Tetap cache hasil error untuk mencegah flooding
+    setCached(cacheKey, "id");
     return "id";
   }
-  return (data && data.lang) || "id";
 }
 
 async function setUserLang(userId, lang) {
-  const normalized = lang === "en" ? "en" : "id";
-  const { error } = await supabase
-    .from("user_settings")
-    .upsert(
-      { user_id: userId, lang: normalized },
-      { onConflict: "user_id" }
-    );
-  if (error) {
-    console.error("Supabase setUserLang error:", error.message);
+  try {
+    const normalized = lang === "en" ? "en" : "id";
+    const { error } = await supabase
+      .from("user_settings")
+      .upsert(
+        { user_id: userId, lang: normalized },
+        { onConflict: "user_id" }
+      );
+    
+    if (error) {
+      console.error("Supabase setUserLang error:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        userId: userId,
+        lang: lang
+      });
+    } else {
+      // Bersihkan cache ketika bahasa diubah
+      const cacheKey = `user_lang_${userId}`;
+      cache.delete(cacheKey);
+    }
+  } catch (err) {
+    console.error("Unexpected error in setUserLang:", {
+      message: err.message,
+      stack: err.stack,
+      userId: userId,
+      lang: lang
+    });
   }
 }
 
 /** ========== PREMIUM ========== */
 
 async function isPremium(userId) {
-  const now = new Date().toISOString();
-  const { data, error } = await supabase
-    .from("premium")
-    .select("expires_at")
-    .eq("user_id", userId)
-    .gt("expires_at", now)
-    .limit(1)
-    .maybeSingle();
+  // Cek cache terlebih dahulu
+  const cacheKey = `user_premium_${userId}`;
+  const cached = getCached(cacheKey);
+  if (cached !== null) {
+    return cached;
+  }
+  
+  try {
+    const now = new Date().toISOString();
+    const { data, error } = await supabase
+      .from("premium")
+      .select("expires_at")
+      .eq("user_id", userId)
+      .gt("expires_at", now)
+      .limit(1)
+      .maybeSingle();
 
-  if (error) {
-    console.error("Supabase isPremium error:", error.message);
+    if (error) {
+      console.error("Supabase isPremium error:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        userId: userId
+      });
+      // Tetap cache hasil error untuk mencegah flooding
+      setCached(cacheKey, false);
+      return false;
+    }
+    
+    const result = !!data;
+    setCached(cacheKey, result);
+    return result;
+  } catch (err) {
+    console.error("Unexpected error in isPremium:", {
+      message: err.message,
+      stack: err.stack,
+      userId: userId
+    });
+    // Tetap cache hasil error untuk mencegah flooding
+    setCached(cacheKey, false);
     return false;
   }
-  return !!data;
 }
 
 async function extendPremium(userId, days) {
-  const now = new Date();
-
-  const { data, error } = await supabase
-    .from("premium")
-    .select("expires_at")
-    .eq("user_id", userId)
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    console.error("Supabase extendPremium select error:", error.message);
-    return;
-  }
-
-  let baseDate = now;
-  if (data && data.expires_at) {
-    const existing = new Date(data.expires_at);
-    if (!Number.isNaN(existing.getTime()) && existing > now) {
-      baseDate = existing;
+  try {
+    // Validasi input
+    if (!userId || !Number.isInteger(userId) || userId <= 0) {
+      console.error("extendPremium: invalid userId", { userId });
+      return;
     }
-  }
+    
+    if (!days || !Number.isFinite(days) || days <= 0) {
+      console.error("extendPremium: invalid days", { days });
+      return;
+    }
+    
+    // Batasi jumlah hari yang bisa ditambahkan dalam satu kali transaksi
+    if (days > 3650) { // Maksimal 10 tahun
+      console.warn("extendPremium: suspicious days amount", { userId, days });
+      return;
+    }
+    
+    const now = new Date();
 
-  const newExpires = new Date(baseDate.getTime() + days * 86400 * 1000);
-  const newExpiresIso = newExpires.toISOString();
+    const { data, error } = await supabase
+      .from("premium")
+      .select("expires_at")
+      .eq("user_id", userId)
+      .limit(1)
+      .maybeSingle();
 
-  const { error: upErr } = await supabase
-    .from("premium")
-    .upsert(
-      { user_id: userId, expires_at: newExpiresIso },
-      { onConflict: "user_id" }
-    );
+    if (error) {
+      console.error("Supabase extendPremium select error:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        userId: userId
+      });
+      return;
+    }
 
-  if (upErr) {
-    console.error("Supabase extendPremium upsert error:", upErr.message);
+    let baseDate = now;
+    if (data && data.expires_at) {
+      const existing = new Date(data.expires_at);
+      if (!Number.isNaN(existing.getTime()) && existing > now) {
+        baseDate = existing;
+      }
+    }
+
+    const newExpires = new Date(baseDate.getTime() + days * 86400 * 1000);
+    const newExpiresIso = newExpires.toISOString();
+
+    // Logging untuk audit
+    console.log("extendPremium: extending premium", {
+      userId,
+      days,
+      oldExpiry: data?.expires_at,
+      newExpiry: newExpiresIso,
+      timestamp: new Date().toISOString()
+    });
+
+    const { error: upErr } = await supabase
+      .from("premium")
+      .upsert(
+        { user_id: userId, expires_at: newExpiresIso },
+        { onConflict: "user_id" }
+      );
+
+    if (upErr) {
+      console.error("Supabase extendPremium upsert error:", {
+        message: upErr.message,
+        code: upErr.code,
+        details: upErr.details,
+        userId: userId,
+        days: days,
+        newExpires: newExpiresIso
+      });
+    } else {
+      // Bersihkan cache ketika status premium berubah
+      const cacheKey = `user_premium_${userId}`;
+      cache.delete(cacheKey);
+    }
+  } catch (err) {
+    console.error("Unexpected error in extendPremium:", {
+      message: err.message,
+      stack: err.stack,
+      userId: userId,
+      days: days
+    });
   }
 }
 
@@ -991,24 +1339,55 @@ async function disableDiscountCode(rawCode, disabled = true) {
  * Saat ini diambil dari tabel user_stats.
  */
 async function getAllUserIdsForBroadcast() {
-  const { data, error } = await supabase
-    .from("user_stats")
-    .select("user_id");
+  try {
+    // Gunakan pagination untuk menangani jumlah pengguna yang besar
+    const ids = new Set();
+    let lastId = 0;
+    const batchSize = 1000;
+    
+    while (true) {
+      const { data, error } = await supabase
+        .from("user_stats")
+        .select("user_id")
+        .gt("user_id", lastId)
+        .limit(batchSize)
+        .order("user_id", { ascending: true });
 
-  if (error && error.code !== "PGRST116") {
-    console.error("Supabase getAllUserIdsForBroadcast error:", error.message);
+      if (error && error.code !== "PGRST116") {
+        console.error("Supabase getAllUserIdsForBroadcast error:", {
+          message: error.message,
+          code: error.code,
+          details: error.details
+        });
+        break;
+      }
+
+      if (!Array.isArray(data) || data.length === 0) {
+        break;
+      }
+
+      for (const row of data) {
+        const id = Number(row.user_id);
+        if (Number.isFinite(id) && id > 0) {
+          ids.add(id);
+        }
+        lastId = id;
+      }
+
+      // Jika jumlah data kurang dari batch size, berarti sudah habis
+      if (data.length < batchSize) {
+        break;
+      }
+    }
+    
+    return Array.from(ids);
+  } catch (err) {
+    console.error("Unexpected error in getAllUserIdsForBroadcast:", {
+      message: err.message,
+      stack: err.stack
+    });
     return [];
   }
-
-  if (!Array.isArray(data)) return [];
-  const ids = new Set();
-  for (const row of data) {
-    const id = Number(row.user_id);
-    if (Number.isFinite(id) && id > 0) {
-      ids.add(id);
-    }
-  }
-  return Array.from(ids);
 }
 
 /**
@@ -1145,25 +1524,75 @@ async function isMediaBanned({ mediaUniqueId = "", ocrHash = "", textHash = "" }
 /** ========== PAYMENT CODES HELPERS ========== */
 
 async function findUserByPaymentCode(code, methodFilter = null) {
-  if (!code) return null;
-  let query = supabase
-    .from("payment_codes")
-    .select("user_id,used,method")
-    .eq("code", code)
-    .limit(1)
-    .maybeSingle();
+  try {
+    if (!code) {
+      console.warn("findUserByPaymentCode: no code provided");
+      return null;
+    }
+    
+    // Validasi format kode
+    if (!/^PAY-[A-Z0-9]{4,12}$/.test(code)) {
+      console.warn("findUserByPaymentCode: invalid code format", { code });
+      return null;
+    }
+    
+    let query = supabase
+      .from("payment_codes")
+      .select("user_id,used,method")
+      .eq("code", code)
+      .limit(1)
+      .maybeSingle();
 
-  const { data, error } = await query;
+    const { data, error } = await query;
 
-  if (error && error.code !== "PGRST116") {
-    console.error("Supabase findUserByPaymentCode error:", error.message);
+    if (error && error.code !== "PGRST116") {
+      console.error("Supabase findUserByPaymentCode error:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        queryCode: code
+      });
+      return null;
+    }
+    
+    if (!data) {
+      console.log("findUserByPaymentCode: code not found", { code });
+      return null;
+    }
+    
+    if (data.used) {
+      console.log("findUserByPaymentCode: code already used", { code });
+      return null;
+    }
+    
+    if (methodFilter && data.method !== methodFilter && data.method !== "any") {
+      console.log("findUserByPaymentCode: method mismatch", { 
+        code, 
+        expectedMethod: methodFilter, 
+        actualMethod: data.method 
+      });
+      return null;
+    }
+    
+    const userId = Number(data.user_id);
+    if (!userId || !Number.isInteger(userId) || userId <= 0) {
+      console.error("findUserByPaymentCode: invalid userId in database", { 
+        code, 
+        userId: data.user_id 
+      });
+      return null;
+    }
+    
+    return userId;
+  } catch (err) {
+    console.error("Unexpected error in findUserByPaymentCode:", {
+      message: err.message,
+      stack: err.stack,
+      code: code,
+      methodFilter: methodFilter
+    });
     return null;
   }
-  if (!data || data.used) return null;
-  if (methodFilter && data.method !== methodFilter && data.method !== "any") {
-    return null;
-  }
-  return Number(data.user_id);
 }
 
 async function markPaymentCodeUsed(code) {
