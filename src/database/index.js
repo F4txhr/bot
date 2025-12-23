@@ -238,8 +238,9 @@ async function popFromQueueExcept(userId, preferPremium = false) {
       // Cari premium dulu
       const { data: premList, error: premErr } = await supabase
         .from("queue_free")
-        .select("user_id")
-        .neq("user_id", userId);
+        .select("user_id, joined_at")
+        .neq("user_id", userId)
+        .order("joined_at", { ascending: true });
 
       if (premErr && premErr.code !== "PGRST116") {
         console.error(
@@ -270,11 +271,12 @@ async function popFromQueueExcept(userId, preferPremium = false) {
     }
 
     if (!otherId) {
-      // fallback: ambil satu user apa adanya
+      // fallback: ambil satu user apa adanya (berdasarkan waktu bergabung terlebih dahulu)
       const { data, error } = await supabase
         .from("queue_free")
-        .select("user_id")
+        .select("user_id, joined_at")
         .neq("user_id", userId)
+        .order("joined_at", { ascending: true })
         .limit(1)
         .maybeSingle();
 

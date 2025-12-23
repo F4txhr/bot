@@ -67,6 +67,7 @@ CREATE INDEX IF NOT EXISTS idx_reports_reported_id ON reports(reported_id);
 CREATE INDEX IF NOT EXISTS idx_premium_users_user_id ON premium_users(user_id);
 CREATE INDEX IF NOT EXISTS idx_premium_users_expires_at ON premium_users(expires_at);
 CREATE INDEX IF NOT EXISTS idx_queue_free_user_id ON queue_free(user_id);
+CREATE INDEX IF NOT EXISTS idx_queue_free_joined_at ON queue_free(joined_at);
 
 -- Fungsi trigger untuk memperbarui updated_at
 CREATE OR REPLACE FUNCTION update_updated_at_column()
