@@ -428,7 +428,82 @@ async function handlePremium(ctx) {
       
       await ctx.reply(await getMessage(userId, 'premium_status', 'active') + searchGenderInfo + genderPrefText);
     } else {
-      await ctx.reply(await getMessage(userId, 'premium_status', null));
+      // Tampilkan informasi pembayaran premium dengan keyboard
+      const uniqueCode = `SC${userId}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      
+      // Harga premium
+      const priceList = lang === 'id' 
+        ? `💰 **Daftar Harga Premium:**
+• Rp 1.000 = 1 hari premium
+• Rp 3.000 = 3 hari premium
+• Rp 5.000 = 5 hari premium
+• Rp 10.000 = 10 hari premium
+• Rp 25.000 = 25 hari premium
+• Rp 50.000 = 50 hari premium`
+        : `💰 **Premium Price List:**
+• Rp 1,000 = 1 day premium
+• Rp 3,000 = 3 days premium
+• Rp 5,000 = 5 days premium
+• Rp 10,000 = 10 days premium
+• Rp 25,000 = 25 days premium
+• Rp 50,000 = 50 days premium`;
+
+      const paymentInfo = lang === 'id'
+        ? `💎 **Info Premium ShadowChat**
+
+Dengan premium, kamu bisa:
+• 🔍 Cari pasangan berdasarkan gender
+• ⚡ Prioritas dalam antrian pencarian
+• 📊 Lihat statistik obrolan yang lebih lengkap
+
+${priceList}
+
+📥 **Cara Aktifkan:**
+
+**Opsi 1: Trakteer (Otomatis)**
+• Di kolom pesan dukungan, tulis salah satu:
+  • \`ID: ${userId}\`
+  • atau kode unik: \`${uniqueCode}\`
+  (bot akan otomatis mengaktifkan premium)
+
+**Opsi 2: Transfer Manual**
+• Di catatan transfer, tulis salah satu:
+  • \`ID: ${userId}\`
+  • atau kode unik: \`${uniqueCode}\`
+  (bot akan otomatis mengaktifkan premium)`
+        : `💎 **ShadowChat Premium Info**
+
+With premium, you can:
+• 🔍 Search for partners by gender
+• ⚡ Priority in search queue
+• 📊 View more detailed chat statistics
+
+${priceList}
+
+📥 **How to Activate:**
+
+**Option 1: Trakteer (Automatic)**
+• In the support message field, write either:
+  • \`ID: ${userId}\`
+  • or the unique code: \`${uniqueCode}\`
+  (the bot will automatically activate your premium)
+
+**Option 2: Manual Transfer**
+• In your transfer note, write either:
+  • \`ID: ${userId}\`
+  • or the unique code: \`${uniqueCode}\`
+  (the bot will automatically activate your premium)`;
+
+      const { InlineKeyboard } = require('grammy');
+      const paymentKeyboard = new InlineKeyboard()
+        .text(lang === 'id' ? '💳 Transfer Manual' : '💳 Manual Transfer', `pay_manual:${uniqueCode}`)
+        .row()
+        .text(lang === 'id' ? '🌐 Buka Trakteer' : '🌐 Open Trakteer', `pay_trakteer:${uniqueCode}`);
+
+      await ctx.reply(paymentInfo, {
+        reply_markup: paymentKeyboard,
+        parse_mode: 'Markdown'
+      });
     }
   } catch (error) {
     console.error('Error in handlePremium:', error);

@@ -16,10 +16,10 @@ const CACHE_TTL = 5 * 60 * 1000;
  */
 async function initDb() {
   try {
-    // Cek koneksi dengan query sederhana
+    // Cek koneksi dengan query sederhana, menggunakan user_id sebagai ganti id
     const { data, error } = await supabase
       .from('users')
-      .select('id')
+      .select('user_id')
       .limit(1);
 
     if (error) {

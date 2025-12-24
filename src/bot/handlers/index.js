@@ -40,6 +40,8 @@ const config = require('../../config');
 const broadcastStatus = new Map();
 // Status giftpremium untuk setiap admin
 const giftpremiumStatus = new Map();
+// Status sesi pembayaran untuk setiap user
+const paymentSessionStatus = new Map();
 
 // Handler untuk callback query (inline keyboard)
 async function handleCallbackQuery(ctx) {
@@ -186,6 +188,225 @@ async function handleMessage(ctx) {
         await handleAdminGiftPremium(ctx);
         return;
       }
+    }
+
+    // Cek apakah user sedang dalam sesi pembayaran manual (in-memory)
+    const paymentSession = paymentSessionStatus.get(userId);
+    if (paymentSession && paymentSession.startsWith('manual:')) {
+      // User dalam sesi pembayaran manual, proses bukti pembayaran
+      const uniqueCode = paymentSession.split(':')[1];
+      
+      if (ctx.message.photo) {
+        // Proses screenshot pembayaran dengan OCR
+        const lang = await getUserLang(userId) || 'id';
+        
+        // Kirim pesan bahwa bukti pembayaran sedang diproses
+        const processingText = lang === 'id'
+          ? '🔍 Memproses bukti pembayaran...'
+          : '🔍 Processing payment proof...';
+        
+        await ctx.reply(processingText);
+        
+        try {
+          // Ambil foto terbesar (resolusi tertinggi)
+          const photo = ctx.message.photo[ctx.message.photo.length - 1];
+          const file = await ctx.api.getFile(photo.file_id);
+          const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`;
+          
+          // Impor Tesseract di sini
+          const Tesseract = require('tesseract.js');
+          
+          // Proses OCR
+          const result = await Tesseract.recognize(
+            fileUrl,
+            'ind+eng', // Bahasa: Indonesia + English
+            {
+              logger: m => {} // Matikan logging
+            }
+          );
+          
+          const ocrText = result.data.text;
+          
+          // Ekstrak informasi dari OCR
+          const amountMatches = ocrText.match(/(?:Rp|rp|IDR)\s*([0-9.,]+)/gi);
+          const codeMatches = ocrText.match(/SC\d+-[A-Z0-9]+/gi); // Cari kode unik SCxxx-xxxx
+          
+          // Cek apakah kode cocok
+          const codeMatch = codeMatches && codeMatches.find(code => code.includes(uniqueCode));
+          
+          if (codeMatch) {
+            // Cek jumlah transfer
+            if (amountMatches && amountMatches.length > 0) {
+              // Ambil jumlah terbesar dari OCR
+              const amounts = amountMatches.map(match => {
+                const num = match.replace(/Rp|rp|IDR|[.,]/g, '').trim();
+                return parseInt(num) || 0;
+              }).filter(num => num > 0);
+              
+              if (amounts.length > 0) {
+                const maxAmount = Math.max(...amounts);
+                // Hitung hari premium berdasarkan jumlah transfer
+                const premiumDays = Math.floor(maxAmount / 1000); // Rp 1.000 = 1 hari
+                
+                if (premiumDays > 0) {
+                  // Perpanjang premium
+                  await setPremium(userId, premiumDays);
+                  
+                  const successText = lang === 'id'
+                    ? `✅ Pembayaran berhasil diverifikasi!\n\nKamu mendapatkan ${premiumDays} hari premium.\nFitur premium sekarang aktif.`
+                    : `✅ Payment successfully verified!\n\nYou received ${premiumDays} days of premium.\nPremium features are now active.`;
+                  
+                  await ctx.reply(successText);
+                  
+                  // Kirim notifikasi ke admin atau grup
+                  for (const adminId of config.ADMIN_USER_IDS) {
+                    try {
+                      const adminText = `💰 Pembayaran otomatis terverifikasi\n\nUser: ${userId}\nJumlah: Rp ${maxAmount.toLocaleString()}\nKode: ${codeMatch}\nHari: ${premiumDays} hari`;
+                      await ctx.api.sendMessage(adminId, adminText);
+                    } catch (e) {
+                      console.error('Gagal kirim notifikasi ke admin:', e.message);
+                    }
+                  }
+                  
+                  // Kirim ke grup log pembayaran jika dikonfigurasi
+                  if (config.PAYMENT_LOG_CHAT_ID && config.PAYMENT_LOG_CHAT_ID !== 0) {
+                    try {
+                      const logText = [
+                        "💸 *Payment Verification Success*",
+                        "",
+                        `User ID: \`${userId}\``,
+                        `Amount: Rp ${maxAmount.toLocaleString("id-ID")}`,
+                        `Code: ${codeMatch}`,
+                        `Days: ${premiumDays}`,
+                        `Status: Automatic Verification Success`,
+                      ].join("\n");
+                      
+                      await ctx.api.sendMessage(config.PAYMENT_LOG_CHAT_ID, logText, {
+                        parse_mode: "Markdown",
+                        message_thread_id: config.PAYMENT_LOG_TOPIC_ID && config.PAYMENT_LOG_TOPIC_ID > 0
+                          ? config.PAYMENT_LOG_TOPIC_ID
+                          : undefined,
+                      });
+                    } catch (err) {
+                      console.error("Gagal kirim log pembayaran ke grup:", err.message);
+                    }
+                  }
+                  
+                  // Hapus sesi pembayaran
+                  paymentSessionStatus.delete(userId);
+                  return;
+                }
+              }
+            }
+          }
+          
+          // Jika tidak cocok atau tidak bisa diverifikasi otomatis, kirim ke admin
+          const manualText = lang === 'id'
+            ? `⚠️ Pembayaran perlu verifikasi manual.\n\nAdmin akan segera memverifikasi bukti pembayaranmu.`
+            : `⚠️ Payment requires manual verification.\n\nAdmin will verify your payment proof shortly.`;
+          
+          await ctx.reply(manualText);
+          
+          // Kirim bukti pembayaran ke admin untuk verifikasi manual
+          for (const adminId of config.ADMIN_USER_IDS) {
+            try {
+              // Kirim foto bukti pembayaran ke admin
+              await ctx.api.sendPhoto(adminId, photo.file_id, {
+                caption: `Manual Payment Verification Required\n\nUser: ${userId}\nExpected Code: ${uniqueCode}\n\nOCR Text: ${ocrText.substring(0, 200)}...`
+              });
+            } catch (e) {
+              console.error('Gagal kirim bukti pembayaran ke admin:', e.message);
+            }
+          }
+          
+          // Kirim ke grup log pembayaran jika dikonfigurasi
+          if (config.PAYMENT_LOG_CHAT_ID && config.PAYMENT_LOG_CHAT_ID !== 0) {
+            try {
+              const logText = [
+                "💸 *Manual Payment Verification*",
+                "",
+                `User ID: \`${userId}\``,
+                `Expected Code: ${uniqueCode}`,
+                `Status: Manual Verification Required`,
+                "",
+                "*OCR text:*",
+                "```",
+                ocrText.substring(0, 1900),
+                "```",
+              ].join("\n");
+              
+              await ctx.api.sendMessage(config.PAYMENT_LOG_CHAT_ID, logText, {
+                parse_mode: "Markdown",
+                message_thread_id: config.PAYMENT_LOG_TOPIC_ID && config.PAYMENT_LOG_TOPIC_ID > 0
+                  ? config.PAYMENT_LOG_TOPIC_ID
+                  : undefined,
+              });
+            } catch (err) {
+              console.error("Gagal kirim log pembayaran ke grup:", err.message);
+            }
+          }
+          
+          // Hapus sesi pembayaran
+          paymentSessionStatus.delete(userId);
+          
+        } catch (ocrError) {
+          console.error('OCR Error:', ocrError);
+          
+          // Jika OCR gagal, kirim ke admin untuk verifikasi manual
+          const errorText = lang === 'id'
+            ? `⚠️ Terjadi kesalahan saat memproses bukti pembayaran.\n\nAdmin akan segera memverifikasi bukti pembayaranmu secara manual.`
+            : `⚠️ Error processing payment proof.\n\nAdmin will verify your payment proof manually shortly.`;
+          
+          await ctx.reply(errorText);
+          
+          // Kirim bukti pembayaran ke admin untuk verifikasi manual
+          for (const adminId of config.ADMIN_USER_IDS) {
+            try {
+              // Kirim foto bukti pembayaran ke admin
+              await ctx.api.sendPhoto(adminId, photo.file_id, {
+                caption: `OCR Failed - Manual Verification Required\n\nUser: ${userId}\nExpected Code: ${uniqueCode}\n\nError: ${ocrError.message}`
+              });
+            } catch (e) {
+              console.error('Gagal kirim bukti pembayaran ke admin:', e.message);
+            }
+          }
+          
+          // Kirim ke grup log pembayaran jika dikonfigurasi
+          if (config.PAYMENT_LOG_CHAT_ID && config.PAYMENT_LOG_CHAT_ID !== 0) {
+            try {
+              const logText = [
+                "💸 *OCR Failed - Manual Verification Required*",
+                "",
+                `User ID: \`${userId}\``,
+                `Expected Code: ${uniqueCode}`,
+                `Status: OCR Failed, Manual Verification Required`,
+                `Error: ${ocrError.message}`,
+              ].join("\n");
+              
+              await ctx.api.sendMessage(config.PAYMENT_LOG_CHAT_ID, logText, {
+                parse_mode: "Markdown",
+                message_thread_id: config.PAYMENT_LOG_TOPIC_ID && config.PAYMENT_LOG_TOPIC_ID > 0
+                  ? config.PAYMENT_LOG_TOPIC_ID
+                  : undefined,
+              });
+            } catch (err) {
+              console.error("Gagal kirim log pembayaran ke grup:", err.message);
+            }
+          }
+          
+          // Hapus sesi pembayaran
+          paymentSessionStatus.delete(userId);
+        }
+      } else {
+        // Jika bukan foto, beri instruksi
+        const lang = await getUserLang(userId) || 'id';
+        const text = lang === 'id'
+          ? '📷 Silakan kirim screenshot bukti transfer kamu.'
+          : '📷 Please send your payment transfer screenshot.';
+        
+        await ctx.reply(text);
+      }
+      return; // Keluar dari handler karena ini adalah pesan pembayaran, bukan pesan chat
     }
 
     // Cek apakah user sedang dalam proses pemilihan gender
