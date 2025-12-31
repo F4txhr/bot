@@ -4,7 +4,8 @@
   "description": "ShadowChat anonymous Telegram bot - Node.js version for Pterodactyl",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "mocha test/**/*.test.js --timeout 10000"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.48.0",
@@ -12,5 +13,8 @@
     "express": "^5.2.1",
     "grammy": "^1.38.4",
     "tesseract.js": "^5.1.0"
+  },
+  "devDependencies": {
+    "mocha": "^10.2.0"
   }
 }

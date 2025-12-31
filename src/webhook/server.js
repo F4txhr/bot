@@ -3,9 +3,32 @@ const crypto = require('crypto');
 const config = require('../config');
 const { isPremium, setPremium } = require('../database');
 const { createLogger } = require('../utils');
+const { setupDashboardRoutes } = require('../admin/dashboard');
+const { startPeriodicCleanup } = require('../admin/cleanup');
 
 // Inisialisasi logger
 const logger = createLogger('Webhook');
+
+// Middleware autentikasi sederhana untuk admin
+function requireAuth(req, res, next) {
+  const authHeader = req.headers.authorization;
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  const token = authHeader.substring(7);
+  
+  // Untuk production, gunakan JWT atau token yang lebih aman
+  // Untuk saat ini, gunakan simple token dari env
+  const adminToken = process.env.ADMIN_TOKEN || 'admin_secret_token_change_me';
+  
+  if (token !== adminToken) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+  
+  next();
+}
 
 // Validasi signature Trakteer
 function validateTrakteerSignature(payload, signature, secret) {
@@ -112,11 +135,18 @@ function runWebhookServer() {
     res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
   });
   
+  // Setup admin dashboard routes
+  setupDashboardRoutes(app, requireAuth);
+  
   const port = config.WEBHOOK_PORT;
   
   app.listen(port, () => {
     logger.info(`Webhook server berjalan di port ${port}`);
+    logger.info(`Admin dashboard: http://localhost:${port}/admin/dashboard`);
   });
+  
+  // Start periodic cleanup
+  startPeriodicCleanup(6);
   
   return app;
 }

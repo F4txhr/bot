@@ -38,6 +38,8 @@ const {
   SEARCH_COOLDOWN,
   AUTO_BAN_REPORTS
 } = require('../../utils');
+const { addMediaReport } = require('../../admin/media-reports');
+const { createMediaHash } = require('../../utils/media-hash');
 const config = require('../../config');
 
 // Pesan dalam bahasa Indonesia dan Inggris
@@ -731,6 +733,197 @@ async function handleNext(ctx) {
   }
 }
 
+// Handler untuk perintah /reportmedia (reply to media)
+async function handleReportMedia(ctx) {
+  try {
+    const userId = ctx.from?.id;
+    if (!validateUserId(userId)) {
+      return;
+    }
+
+    // Cek apakah user dibanned
+    if (await isBanned(userId)) {
+      await ctx.reply(await getMessage(userId, 'banned'));
+      return;
+    }
+
+    // Cek apakah user punya pasangan
+    const partnerId = await getPartner(userId);
+    if (!partnerId) {
+      const lang = await getUserLang(userId) || 'id';
+      const text = lang === 'id'
+        ? '❌ Kamu tidak sedang dalam obrolan. Gunakan /find untuk mencari pasangan.'
+        : '❌ You are not in a chat. Use /find to search for a partner.';
+      await ctx.reply(text);
+      return;
+    }
+
+    // Cek apakah ini reply ke message
+    const repliedMsg = ctx.message?.reply_to_message;
+    if (!repliedMsg) {
+      const lang = await getUserLang(userId) || 'id';
+      const text = lang === 'id'
+        ? '❌ Gunakan /reportmedia dengan reply ke foto/video/media yang ingin dilaporkan.\n\nContoh: Reply ke foto lalu ketik /reportmedia'
+        : '❌ Use /reportmedia by replying to the photo/video/media you want to report.\n\nExample: Reply to photo then type /reportmedia';
+      await ctx.reply(text);
+      return;
+    }
+
+    // Detect media type
+    let mediaType = null;
+    let mediaFileId = null;
+    let caption = null;
+
+    if (repliedMsg.photo) {
+      mediaType = 'photo';
+      mediaFileId = repliedMsg.photo[repliedMsg.photo.length - 1].file_id;
+      caption = repliedMsg.caption;
+    } else if (repliedMsg.video) {
+      mediaType = 'video';
+      mediaFileId = repliedMsg.video.file_id;
+      caption = repliedMsg.caption;
+    } else if (repliedMsg.voice) {
+      mediaType = 'voice';
+      mediaFileId = repliedMsg.voice.file_id;
+    } else if (repliedMsg.video_note) {
+      mediaType = 'video_note';
+      mediaFileId = repliedMsg.video_note.file_id;
+    } else if (repliedMsg.audio) {
+      mediaType = 'audio';
+      mediaFileId = repliedMsg.audio.file_id;
+      caption = repliedMsg.caption;
+    } else if (repliedMsg.sticker) {
+      mediaType = 'sticker';
+      mediaFileId = repliedMsg.sticker.file_id;
+    } else if (repliedMsg.document) {
+      mediaType = 'document';
+      mediaFileId = repliedMsg.document.file_id;
+      caption = repliedMsg.caption;
+    } else if (repliedMsg.animation) {
+      mediaType = 'animation';
+      mediaFileId = repliedMsg.animation.file_id;
+      caption = repliedMsg.caption;
+    } else {
+      const lang = await getUserLang(userId) || 'id';
+      const text = lang === 'id'
+        ? '❌ Pesan yang kamu reply bukan media yang bisa dilaporkan.\n\nYang bisa dilaporkan: foto, video, voice, sticker, dokumen, GIF.'
+        : '❌ The message you replied to is not reportable media.\n\nReportable: photo, video, voice, sticker, document, GIF.';
+      await ctx.reply(text);
+      return;
+    }
+
+    // Extract reason from command (optional)
+    const commandText = ctx.message.text || '';
+    const reason = commandText.replace('/reportmedia', '').trim() || 'Konten tidak pantas';
+
+    // Add media report
+    const result = await addMediaReport(
+      userId,
+      partnerId,
+      mediaType,
+      mediaFileId,
+      caption,
+      reason
+    );
+
+    if (!result.success) {
+      const lang = await getUserLang(userId) || 'id';
+      const text = lang === 'id'
+        ? '❌ Gagal melaporkan media. Silakan coba lagi.'
+        : '❌ Failed to report media. Please try again.';
+      await ctx.reply(text);
+      return;
+    }
+
+    // Send confirmation to reporter
+    const lang = await getUserLang(userId) || 'id';
+    const confirmText = lang === 'id'
+      ? '✅ **Media Berhasil Dilaporkan**\n\nTerima kasih atas laporanmu. Tim moderasi akan meninjau media ini.\n\n⚠️ Obrolan tetap berlanjut. Gunakan /leave jika ingin keluar dari obrolan.'
+      : '✅ **Media Successfully Reported**\n\nThank you for your report. The moderation team will review this media.\n\n⚠️ Chat continues. Use /leave if you want to exit the chat.';
+    await ctx.reply(confirmText, { parse_mode: 'Markdown' });
+
+    // Forward media to admins with report info
+    for (const adminId of config.ADMIN_USER_IDS) {
+      try {
+        const mediaHash = result.mediaHash;
+        const reportText = `🚨 **MEDIA REPORT** #${result.reportId}\n\n` +
+          `📋 **Report Details:**\n` +
+          `Reporter: ${userId}\n` +
+          `Reported User: ${partnerId}\n` +
+          `Media Type: ${mediaType}\n` +
+          `Reason: ${reason}\n` +
+          `Hash: \`${mediaHash}\`\n\n` +
+          `⚡ **Quick Actions:**\n` +
+          `/banmedia ${mediaHash} - Ban this media\n` +
+          `/banuser ${partnerId} - Ban reported user\n` +
+          `/restrictmedia ${partnerId} ${mediaType} - Restrict media type`;
+
+        // Forward the actual media
+        if (mediaType === 'photo') {
+          await ctx.api.sendPhoto(adminId, mediaFileId, { 
+            caption: reportText,
+            parse_mode: 'Markdown'
+          });
+        } else if (mediaType === 'video') {
+          await ctx.api.sendVideo(adminId, mediaFileId, { 
+            caption: reportText,
+            parse_mode: 'Markdown'
+          });
+        } else if (mediaType === 'voice') {
+          await ctx.api.sendVoice(adminId, mediaFileId);
+          await ctx.api.sendMessage(adminId, reportText, { parse_mode: 'Markdown' });
+        } else if (mediaType === 'video_note') {
+          await ctx.api.sendVideoNote(adminId, mediaFileId);
+          await ctx.api.sendMessage(adminId, reportText, { parse_mode: 'Markdown' });
+        } else if (mediaType === 'audio') {
+          await ctx.api.sendAudio(adminId, mediaFileId, { 
+            caption: reportText,
+            parse_mode: 'Markdown'
+          });
+        } else if (mediaType === 'sticker') {
+          await ctx.api.sendSticker(adminId, mediaFileId);
+          await ctx.api.sendMessage(adminId, reportText, { parse_mode: 'Markdown' });
+        } else if (mediaType === 'document') {
+          await ctx.api.sendDocument(adminId, mediaFileId, { 
+            caption: reportText,
+            parse_mode: 'Markdown'
+          });
+        } else if (mediaType === 'animation') {
+          await ctx.api.sendAnimation(adminId, mediaFileId, { 
+            caption: reportText,
+            parse_mode: 'Markdown'
+          });
+        }
+      } catch (adminError) {
+        console.error('Failed to forward report to admin:', adminError.message);
+      }
+    }
+
+    // Send to report log group if configured
+    if (config.REPORT_LOG_CHAT_ID && config.REPORT_LOG_CHAT_ID !== 0) {
+      try {
+        const logText = `🚨 **Media Report** #${result.reportId}\n\n` +
+          `Reporter: \`${userId}\`\n` +
+          `Reported: \`${partnerId}\`\n` +
+          `Type: ${mediaType}\n` +
+          `Reason: ${reason}`;
+
+        await ctx.api.sendMessage(config.REPORT_LOG_CHAT_ID, logText, {
+          parse_mode: 'Markdown',
+          message_thread_id: config.REPORT_LOG_TOPIC_ID && config.REPORT_LOG_TOPIC_ID > 0
+            ? config.REPORT_LOG_TOPIC_ID
+            : undefined,
+        });
+      } catch (logError) {
+        console.error('Failed to send report to log group:', logError.message);
+      }
+    }
+
+  } catch (error) {
+    console.error('Error in handleReportMedia:', error);
+  }
+}
+
 module.exports = {
   handleStart,
   handleFind,
@@ -739,6 +932,7 @@ module.exports = {
   handleHelp,
   handleLang,
   handleReport,
+  handleReportMedia,
   handleBroadcast,
   handleGiftPremium,
   handlePremium,

@@ -34,6 +34,11 @@ const {
   actionKeyboard,
   handleSearchGender 
 } = require('./../commands');
+const { moderateMessage, checkFloodControl } = require('../../admin/moderation');
+const { trackUserActivity } = require('../../admin/analytics');
+const { validateMedia, getBlockMessage } = require('../../admin/media-security');
+const { isMediaBanned, isUserMediaRestricted } = require('../../admin/media-reports');
+const { createMediaHash } = require('../../utils/media-hash');
 const config = require('../../config');
 
 // Status broadcast untuk setiap admin
@@ -441,26 +446,207 @@ async function handleMessage(ctx) {
     // Tangani pesan dari user biasa (pesan chat ke pasangan)
     const partnerId = await getPartner(userId);
     if (partnerId) {
+      // Check flood control
+      const floodCheck = await checkFloodControl(userId);
+      if (floodCheck.shouldBlock) {
+        const lang = await getUserLang(userId) || 'id';
+        const text = lang === 'id'
+          ? '⚠️ Kamu mengirim pesan terlalu cepat. Tunggu sebentar.'
+          : '⚠️ You are sending messages too fast. Please wait.';
+        await ctx.reply(text);
+        return;
+      }
+
+      // Check if user is premium
+      const userIsPremium = await isPremium(userId);
+
+      // Validate media security
+      const mediaValidation = await validateMedia(ctx, userIsPremium);
+      
+      if (!mediaValidation.allowed) {
+        const lang = await getUserLang(userId) || 'id';
+        const blockMsg = await getBlockMessage(mediaValidation, lang);
+        await ctx.reply(blockMsg, { parse_mode: 'Markdown' });
+        
+        // Log dangerous file attempts
+        if (mediaValidation.severity === 'critical' || mediaValidation.severity === 'high') {
+          await addReport(userId, 0, `Dangerous file attempt: ${mediaValidation.fileName} (${mediaValidation.reason})`);
+          
+          // Notify admins
+          for (const adminId of config.ADMIN_USER_IDS) {
+            try {
+              await ctx.api.sendMessage(adminId, 
+                `🚨 Dangerous File Attempt\n\nUser: ${userId}\nFile: ${mediaValidation.fileName}\nReason: ${mediaValidation.reason}\nSeverity: ${mediaValidation.severity}`
+              );
+            } catch (e) {
+              console.error('Failed to notify admin:', e.message);
+            }
+          }
+        }
+        return;
+      }
+
+      // Show warning for suspicious files
+      if (mediaValidation.warning) {
+        const lang = await getUserLang(userId) || 'id';
+        const warnMsg = await getBlockMessage(mediaValidation, lang);
+        await ctx.reply(warnMsg, { parse_mode: 'Markdown' });
+      }
+
+      // Moderate message if text
+      if (ctx.message.text) {
+        const lang = await getUserLang(userId) || 'id';
+        const modResult = await moderateMessage(ctx.message.text, userId, lang);
+        
+        if (modResult.shouldBlock) {
+          const blockText = lang === 'id'
+            ? '🚫 Pesanmu mengandung konten yang tidak pantas dan tidak dapat dikirim.'
+            : '🚫 Your message contains inappropriate content and cannot be sent.';
+          await ctx.reply(blockText);
+          
+          // Notify partner
+          const partnerLang = await getUserLang(partnerId) || 'id';
+          const partnerText = partnerLang === 'id'
+            ? '⚠️ Pasangan mencoba mengirim konten yang tidak pantas. Tetap waspada.'
+            : '⚠️ Your partner tried to send inappropriate content. Stay alert.';
+          await ctx.api.sendMessage(partnerId, partnerText);
+          return;
+        }
+        
+        if (modResult.shouldWarn) {
+          const warnText = lang === 'id'
+            ? '⚠️ Pesan dikirim, tapi harap jaga kesopanan dalam berkomunikasi.'
+            : '⚠️ Message sent, but please maintain courtesy in communication.';
+          await ctx.reply(warnText);
+        }
+      }
+
+      // Track activity
+      await trackUserActivity(userId, 'message_sent', {
+        messageType: ctx.message.text ? 'text' : 
+                     ctx.message.photo ? 'photo' :
+                     ctx.message.video ? 'video' :
+                     ctx.message.voice ? 'voice' :
+                     ctx.message.sticker ? 'sticker' :
+                     ctx.message.document ? 'document' : 'other'
+      });
+
+      // Check banned media (untuk media selain text)
+      if (!ctx.message.text && !ctx.message.location && !ctx.message.contact) {
+        let mediaFileId = null;
+        let mediaType = null;
+
+        if (ctx.message.photo) {
+          mediaFileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
+          mediaType = 'photo';
+        } else if (ctx.message.video) {
+          mediaFileId = ctx.message.video.file_id;
+          mediaType = 'video';
+        } else if (ctx.message.voice) {
+          mediaFileId = ctx.message.voice.file_id;
+          mediaType = 'voice';
+        } else if (ctx.message.video_note) {
+          mediaFileId = ctx.message.video_note.file_id;
+          mediaType = 'video_note';
+        } else if (ctx.message.audio) {
+          mediaFileId = ctx.message.audio.file_id;
+          mediaType = 'audio';
+        } else if (ctx.message.sticker) {
+          mediaFileId = ctx.message.sticker.file_id;
+          mediaType = 'sticker';
+        } else if (ctx.message.document) {
+          mediaFileId = ctx.message.document.file_id;
+          mediaType = 'document';
+        } else if (ctx.message.animation) {
+          mediaFileId = ctx.message.animation.file_id;
+          mediaType = 'animation';
+        }
+
+        if (mediaFileId && mediaType) {
+          // Check if media is banned
+          const mediaHash = await createMediaHash(mediaFileId, mediaType);
+          if (mediaHash && await isMediaBanned(mediaHash)) {
+            const lang = await getUserLang(userId) || 'id';
+            const blockText = lang === 'id'
+              ? '🚫 Media ini telah dilarang dan tidak dapat dikirim.\n\nMedia ini telah dilaporkan sebelumnya dan di-ban oleh admin.'
+              : '🚫 This media has been banned and cannot be sent.\n\nThis media was previously reported and banned by admin.';
+            await ctx.reply(blockText);
+            return;
+          }
+
+          // Check if user is restricted from sending this media type
+          if (await isUserMediaRestricted(userId, mediaType)) {
+            const lang = await getUserLang(userId) || 'id';
+            const restrictText = lang === 'id'
+              ? `🚫 Kamu tidak diizinkan mengirim ${mediaType}.\n\nAkun kamu telah dibatasi oleh admin.`
+              : `🚫 You are not allowed to send ${mediaType}.\n\nYour account has been restricted by admin.`;
+            await ctx.reply(restrictText);
+            return;
+          }
+        }
+      }
+
       // Kirim pesan ke pasangan
       try {
         if (ctx.message.text) {
           await ctx.api.sendMessage(partnerId, ctx.message.text);
         } else if (ctx.message.photo) {
-          const photo = ctx.message.photo[ctx.message.photo.length - 1]; // Ambil ukuran terbesar
-          await ctx.api.sendPhoto(partnerId, photo.file_id, { caption: ctx.message.caption });
-        } else if (ctx.message.document) {
-          await ctx.api.sendDocument(partnerId, ctx.message.document.file_id, { caption: ctx.message.caption });
+          const photo = ctx.message.photo[ctx.message.photo.length - 1];
+          await ctx.api.sendPhoto(partnerId, photo.file_id, { 
+            caption: ctx.message.caption || undefined 
+          });
         } else if (ctx.message.video) {
-          await ctx.api.sendVideo(partnerId, ctx.message.video.file_id, { caption: ctx.message.caption });
+          await ctx.api.sendVideo(partnerId, ctx.message.video.file_id, { 
+            caption: ctx.message.caption || undefined 
+          });
+        } else if (ctx.message.voice) {
+          await ctx.api.sendVoice(partnerId, ctx.message.voice.file_id, {
+            caption: ctx.message.caption || undefined
+          });
+        } else if (ctx.message.video_note) {
+          await ctx.api.sendVideoNote(partnerId, ctx.message.video_note.file_id);
+        } else if (ctx.message.audio) {
+          await ctx.api.sendAudio(partnerId, ctx.message.audio.file_id, {
+            caption: ctx.message.caption || undefined
+          });
+        } else if (ctx.message.sticker) {
+          await ctx.api.sendSticker(partnerId, ctx.message.sticker.file_id);
+        } else if (ctx.message.document) {
+          await ctx.api.sendDocument(partnerId, ctx.message.document.file_id, { 
+            caption: ctx.message.caption || undefined 
+          });
+        } else if (ctx.message.animation) {
+          await ctx.api.sendAnimation(partnerId, ctx.message.animation.file_id, {
+            caption: ctx.message.caption || undefined
+          });
+        } else if (ctx.message.location) {
+          await ctx.api.sendLocation(partnerId, 
+            ctx.message.location.latitude, 
+            ctx.message.location.longitude
+          );
+        } else if (ctx.message.contact) {
+          await ctx.api.sendContact(partnerId,
+            ctx.message.contact.phone_number,
+            ctx.message.contact.first_name,
+            {
+              last_name: ctx.message.contact.last_name || undefined
+            }
+          );
         }
       } catch (sendError) {
-        // Jika gagal mengirim ke pasangan (mungkin pasangan sudah logout), hapus pasangan
         await clearPair(userId);
-        await ctx.reply('⚠️ Gagal mengirim pesan ke pasangan. Koneksi telah diputus.');
+        const lang = await getUserLang(userId) || 'id';
+        const errorText = lang === 'id'
+          ? '⚠️ Gagal mengirim pesan ke pasangan. Koneksi telah diputus.'
+          : '⚠️ Failed to send message to partner. Connection has been lost.';
+        await ctx.reply(errorText);
       }
     } else {
-      // Jika tidak ada pasangan, beri instruksi
-      await ctx.reply('💬 Kirim pesanmu atau gunakan /find untuk mencari pasangan.');
+      const lang = await getUserLang(userId) || 'id';
+      const text = lang === 'id'
+        ? '💬 Kirim pesanmu atau gunakan /find untuk mencari pasangan.'
+        : '💬 Send your message or use /find to search for a partner.';
+      await ctx.reply(text);
     }
   } catch (error) {
     console.error('Error in handleMessage:', error);

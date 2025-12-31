@@ -8,6 +8,7 @@ const {
   handleHelp,
   handleLang,
   handleReport,
+  handleReportMedia,
   handleBroadcast,
   handleGiftPremium,
   handlePremium,
@@ -41,6 +42,7 @@ bot.command('disconnect', handleDisconnect);
 bot.command('help', handleHelp);
 bot.command('lang', handleLang);
 bot.command('report', handleReport);
+bot.command('reportmedia', handleReportMedia); // Report media dengan reply
 bot.command('broadcast', handleBroadcast); // Perintah admin
 bot.command('giftpremium', handleGiftPremium); // Perintah admin
 bot.command('premium', handlePremium);
@@ -55,10 +57,17 @@ bot.callbackQuery(/.*/, handleCallbackQuery);
 // Handler untuk pesan teks
 bot.on('message:text', handleMessage);
 
-// Handler untuk pesan selain teks (gambar, dokumen, dll)
+// Handler untuk semua jenis media
 bot.on(':photo', handleMessage);
-bot.on(':document', handleMessage);
 bot.on(':video', handleMessage);
+bot.on(':voice', handleMessage);
+bot.on(':video_note', handleMessage);
+bot.on(':audio', handleMessage);
+bot.on(':document', handleMessage);
+bot.on(':sticker', handleMessage);
+bot.on(':animation', handleMessage);
+bot.on(':location', handleMessage);
+bot.on(':contact', handleMessage);
 
 // Handler untuk perintah yang tidak dikenal
 bot.on('message', handleUnknownCommand);
